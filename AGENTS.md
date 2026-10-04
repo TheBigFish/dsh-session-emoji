@@ -37,7 +37,7 @@ Standalone DeepSeek Harness plugin repository (`dsh-session-emoji`). Development
 
 ## Release
 
-Publishing is tag-driven (no release script): bump `package.json`, stamp the CHANGELOG `[Unreleased]` section into a dated `## [x.y.z]` entry, re-run the full gate, commit, and push `main --follow-tags` with a `v<version>` tag (never force). `.github/workflows/release.yml` re-runs the gate, verifies the CHANGELOG names the tagged version, publishes to npm with provenance (skips when `NPM_TOKEN` is unset or the version already exists), and creates the GitHub Release.
+Publishing is tag-driven (no release script): bump `package.json`, stamp the CHANGELOG `[Unreleased]` section into a dated `## [x.y.z]` entry, re-run the full gate, commit, and push `main --follow-tags` with a `v<version>` tag (never force). `.github/workflows/release.yml` re-runs the gate, verifies the CHANGELOG names the tagged version, publishes to npm with provenance (authenticates with the `NPM_TOKEN` secret when set — required for the first publish of a new package name — otherwise expects a trusted publisher configured on npmjs.com; skips when the version already exists), and creates the GitHub Release.
 
 ## Docs
 

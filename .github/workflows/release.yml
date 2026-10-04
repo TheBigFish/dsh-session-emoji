@@ -39,7 +39,15 @@ jobs:
           grep -q "## \[${VERSION}\]" CHANGELOG.md || { echo "CHANGELOG.md has no '## [${VERSION}]' section"; exit 1; }
 
       - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -n "${NPM_TOKEN}" ]; then
+            # Token auth covers the first publish of a new package name. Once a
+            # trusted publisher is configured on npmjs.com the secret can be
+            # deleted and the OIDC identity (id-token: write) is used instead.
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "${HOME}/.npmrc"
+          fi
           version="$(node -p "require('./package.json').version")"
           if npm view "dsh-session-emoji@${version}" version >/dev/null 2>&1; then
             echo "dsh-session-emoji@${version} is already published; skipping npm publish"

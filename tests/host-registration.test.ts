@@ -10,7 +10,7 @@
  * field set, the live defaults, and the settings writes this half performs
  * (the presentation claim and the log-backed mirror).
  *
- * @module dsh-session-pin/test/host-registration.test
+ * @module dsh-session-emoji/test/host-registration.test
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -26,8 +26,9 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 interface LiveConfig {
   pinned: Volatile<string[]>
   workspacePinned: Volatile<string[]>
-  colors: Volatile<Record<string, string>>
-  workspaceColors: Volatile<Record<string, string>>
+  emoji: Volatile<Record<string, string>>
+  workspaceEmoji: Volatile<Record<string, string>>
+  recentEmoji: Volatile<string[]>
   boards: Volatile<Record<string, unknown>>
   tags: Volatile<Record<string, string[]>>
   views: Volatile<unknown[]>
@@ -51,9 +52,9 @@ interface LiveConfig {
  */
 const resolveConfig = Config as unknown as (value: unknown) => LiveConfig
 
-/** The former `session-pin` namespace fields: the surface the browser half reads and writes. */
+/** The former `session-emoji` namespace fields: the surface the browser half reads and writes. */
 const LIVE_FIELDS = [
-  'pinned', 'workspacePinned', 'colors', 'workspaceColors', 'boards', 'tags', 'views',
+  'pinned', 'workspacePinned', 'emoji', 'workspaceEmoji', 'recentEmoji', 'boards', 'tags', 'views',
   'maxPins', 'reorderOnLoad', 'pruneStale', 'enableBoards', 'enableTags', 'enableViews', 'enableHealth', 'enableGoto',
 ] as const
 
@@ -119,8 +120,8 @@ async function mount(configValue: Record<string, unknown>, failWrites = false): 
   await provider.await()
 
   await root.plugin(Loader)
-  root.loader.builtins['session-pin-host'] = { name, inject, Config, apply } as unknown as Plugin
-  const entryId = await root.loader.create({ name: 'cordis:session-pin-host', config: configValue })
+  root.loader.builtins['session-emoji-host'] = { name, inject, Config, apply } as unknown as Plugin
+  const entryId = await root.loader.create({ name: 'cordis:session-emoji-host', config: configValue })
   const entry = root.loader.resolve(entryId)
   const fiber = entry.fiber as Fiber
   await fiber.await()
@@ -145,9 +146,9 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-describe('session-pin host half on the 0.1.7 settings contract', () => {
+describe('session-emoji host half on the 0.1.7 settings contract', () => {
   it('names the settings form after the profile entry the bundle patch mounts', () => {
-    expect(SETTINGS_ENTRY_ID).toBe('session-pin')
+    expect(SETTINGS_ENTRY_ID).toBe('session-emoji')
     const patch = readFileSync(join(repositoryRoot, 'cordis.patch.yml'), 'utf8')
     expect(patch).toMatch(new RegExp(`^\\s*(?:-\\s*)?id:\\s*${SETTINGS_ENTRY_ID}\\s*$`, 'mu'))
   })
@@ -166,8 +167,9 @@ describe('session-pin host half on the 0.1.7 settings contract', () => {
     const live = resolveConfig({})
     expect(live.pinned.get()).toEqual([])
     expect(live.workspacePinned.get()).toEqual([])
-    expect(live.colors.get()).toEqual({})
-    expect(live.workspaceColors.get()).toEqual({})
+    expect(live.emoji.get()).toEqual({})
+    expect(live.workspaceEmoji.get()).toEqual({})
+    expect(live.recentEmoji.get()).toEqual([])
     expect(live.boards.get()).toEqual({})
     expect(live.tags.get()).toEqual({})
     expect(live.views.get()).toEqual([])
@@ -228,12 +230,12 @@ describe('session-pin host half on the 0.1.7 settings contract', () => {
     }
   })
 
-  it('mirrors a folded session/pin event into the session-pin entry and ignores every other event', async () => {
+  it('mirrors a folded session/pin event into the session-emoji entry and ignores every other event', async () => {
     const graph = await mount({ enableLogBacking: true })
     try {
       graph.emit({ type: 'session/pin', data: { sessionId: 's1', pinned: true, at: 9 } })
       await settle()
-      expect(graph.settings.writes).toEqual([{ ns: SETTINGS_ENTRY_ID, patch: { pinned: ['s1'], colors: {} } }])
+      expect(graph.settings.writes).toEqual([{ ns: SETTINGS_ENTRY_ID, patch: { pinned: ['s1'], emoji: {} } }])
 
       graph.emit({ type: 'assistant/message', data: { text: 'hi' } })
       graph.emit({ type: 'session/pin', data: { pinned: 'yes' } })
@@ -247,21 +249,21 @@ describe('session-pin host half on the 0.1.7 settings contract', () => {
   it('merges a folded pin over the live pin list already held', async () => {
     // The mirror reads its cache from the plugin's own live references, so a
     // composition value is the merge base — exactly the old scope.get() read — 
-    // and the pin/unpin/color semantics are unchanged. (The real host
+    // and the pin/unpin/emoji semantics are unchanged. (The real host
     // hot-applies an accepted write back into the same reference; the stand-in
     // records only, so the second event folds over the composition value
     // again, which is the case asserted here.)
-    const graph = await mount({ enableLogBacking: true, pinned: ['existing'], colors: { existing: '#f97316' } })
+    const graph = await mount({ enableLogBacking: true, pinned: ['existing'], emoji: { existing: '😀' } })
     try {
       graph.emit({ type: 'session/pin', data: { sessionId: 's1', pinned: true, at: 9 } })
       await settle()
       expect(graph.settings.writes).toEqual([
-        { ns: SETTINGS_ENTRY_ID, patch: { pinned: ['s1', 'existing'], colors: { existing: '#f97316' } } },
+        { ns: SETTINGS_ENTRY_ID, patch: { pinned: ['s1', 'existing'], emoji: { existing: '😀' } } },
       ])
 
-      graph.emit({ type: 'session/pin', data: { sessionId: 'existing', pinned: false, color: null, at: 10 } })
+      graph.emit({ type: 'session/pin', data: { sessionId: 'existing', pinned: false, emoji: null, at: 10 } })
       await settle()
-      expect(graph.settings.writes[1]).toEqual({ ns: SETTINGS_ENTRY_ID, patch: { pinned: [], colors: {} } })
+      expect(graph.settings.writes[1]).toEqual({ ns: SETTINGS_ENTRY_ID, patch: { pinned: [], emoji: {} } })
     } finally {
       await graph.dispose()
     }

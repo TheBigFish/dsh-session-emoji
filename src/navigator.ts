@@ -5,7 +5,7 @@
  * Everything here is a deterministic transform — no DOM, no cordis, no I/O —
  * shared by the store, the controller, and the unit tests. Persistence rides
  * the existing pin store envelope (v3); nothing here ever touches the network.
- * @module dsh-session-pin/navigator
+ * @module dsh-session-emoji/navigator
  */
 
 /** Hard caps (protocol constants, not deployment tunables). */

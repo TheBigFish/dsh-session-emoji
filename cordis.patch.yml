@@ -1,7 +1,8 @@
-# dsh-session-pin bundle patch: mount the dual-face session pinning plugin.
+# dsh-session-emoji bundle patch: mount the dual-face session pin + emoji plugin.
 # `name` is the package name, resolved through the profile's node_modules.
-# The client half loads immediately (platform: web) and reads everything
-# through the `session-pin` settings namespace registered by the host half.
+# The client half loads immediately (platform: web) and reads all state through
+# the live Config form of the entry below; on first mount it also folds in the
+# `session-pin` namespace this plugin was forked from (src/legacy-import.ts).
 - insert:
-    - id: session-pin
-      name: dsh-session-pin
+    - id: session-emoji
+      name: dsh-session-emoji

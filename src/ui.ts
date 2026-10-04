@@ -7,17 +7,17 @@
  * (`sidebar.footer.action`) opening the pinned-sessions panel, and the panel
  * itself (`shell.overlay` — the additive frame-wide floating layer). The
  * panel lists both pin levels — pinned sessions and pinned workspaces —
- * newest pin first, with each row's color dot.
+ * newest pin first, with each row's emoji slot.
  *
  * Every entry renders through the shipped shell's slot outlets; no DOM
- * overlay exists here. Locale copy rides the plugin-owned `session-pin`
+ * overlay exists here. Locale copy rides the plugin-owned `session-emoji`
  * namespace (bound by the browser glue); compositions without the locale
  * service keep the English fallback.
  *
  * React arrives through the module-table seed word (`require('react')`), the
  * shell's own instance — the client bundle externalizes it, never a
  * duplicate.
- * @module dsh-session-pin/ui
+ * @module dsh-session-emoji/ui
  */
 import * as React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
@@ -29,7 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PinOrganizerFace, PinReadFace, PinTranslate, PinUiState, SessionListFace, WorkspaceListFace } from './faces.ts'
 import { groupPinnedByBoard, type BoardRegistry } from './navigator.ts'
 import {
-  FOOTER_CLASS, HEADER_CLASS, MANAGE_CLASS, PANEL_CLASS, PANEL_DOT_CLASS, PANEL_EDITOR_CLASS,
+  FOOTER_CLASS, HEADER_CLASS, MANAGE_CLASS, PANEL_CLASS, PANEL_EDITOR_CLASS, PANEL_EMOJI_CLASS,
   PANEL_GROUP_CLASS, PANEL_GROUP_TOGGLE_CLASS, PANEL_ROW_CLASS, PANEL_SECTION_CLASS, PIN_SVG, PINNED_CLASS,
 } from './pin-ui-shared.ts'
 
@@ -87,13 +87,13 @@ type HeaderButtonProps = ComposedProps<'conversation.session.header.actions', st
 }
 
 /** Projection-key read, crossed through the version boundary (the `pin` key
- * ships with the upstream session-pin package; the npm baseline lacks it). */
+ * ships with the upstream session-emoji package; the npm baseline lacks it). */
 type PinProjectionRead = (key: string) => { pinned?: boolean; at?: number } | null | undefined
 
 /**
  * Pin toggle in the session header's action row. The framework resolves the
  * sessionId from the session scope, so the toggle never depends on row DOM.
- * When the host serves the log-backed `pin` projection (upstream session-pin
+ * When the host serves the log-backed `pin` projection (upstream session-emoji
  * package), it is the freshest truth — other browsers' commits arrive
  * through it — and the store membership is the fallback. The explicit
  * `setPinned` commit keeps the projection and the store converging.
@@ -139,6 +139,7 @@ function PinFooterAction(props: FooterActionProps): React.ReactNode {
   const { wide, pin, ui, t } = props
   const count = React.useSyncExternalStore(pin.subscribe, () =>
     pin.getPinned().length + pin.getWorkspacePinned().length)
+  const syncPending = React.useSyncExternalStore(pin.subscribe, () => pin.hasPendingWrites())
   const open = React.useSyncExternalStore(ui.subscribe, () => ui.getSnapshot().open)
   const label = t('footerTitle')
   return React.createElement('button', {
@@ -147,6 +148,9 @@ function PinFooterAction(props: FooterActionProps): React.ReactNode {
     title: label,
     'aria-label': label,
     'aria-pressed': open,
+    // The settings round trip is asynchronous; mark the control while a
+    // committed change has not been acknowledged by the Host yet.
+    'data-pending': syncPending ? '1' : undefined,
     onClick: () => {
       ui.toggle()
     },
@@ -174,13 +178,13 @@ function boardName(boards: BoardRegistry, boardId: string | undefined, ungrouped
   return boardId === undefined ? ungroupedLabel : (boards.byId[boardId]?.name ?? boardId)
 }
 
-/** One panel row: pin glyph, color dot, title, and the per-row manage button.
+/** One panel row: pin glyph, emoji slot, title, and the per-row manage button.
  *  Navigator attributes (id/title/tags/board) let the nav bar filter and
  *  annotate rows without entering React's tree. */
 function panelRow(
   key: string,
   title: string,
-  color: string | undefined,
+  emoji: string | undefined,
   onClick: () => void,
   navigator: { id: string; tags: readonly string[]; boardId?: string; sessionId?: string },
   manageLabel: string,
@@ -205,7 +209,7 @@ function panelRow(
     },
   },
     React.createElement('span', { dangerouslySetInnerHTML: { __html: PIN_SVG } }),
-    React.createElement('span', { className: PANEL_DOT_CLASS, ...(color === undefined ? {} : { style: { background: color, borderColor: color } }) }),
+    React.createElement('span', { className: PANEL_EMOJI_CLASS, ...(emoji === undefined ? {} : { 'data-emoji': emoji }) }, emoji),
     React.createElement('span', null, title),
     React.createElement('button', {
       type: 'button',
@@ -327,7 +331,7 @@ function PinPanel(props: PanelProps): React.ReactNode {
     sectionLabel: string,
     ids: readonly string[],
     titleOf: (id: string) => string,
-    colorOf: (id: string) => string | undefined,
+    emojiOf: (id: string) => string | undefined,
     openRow: (id: string) => void,
     isSession: boolean,
   ): void => {
@@ -346,7 +350,7 @@ function PinPanel(props: PanelProps): React.ReactNode {
         rows.push(panelRow(
           `${sectionKey}:${id}`,
           title,
-          colorOf(id),
+          emojiOf(id),
           () => {
             openRow(id)
             ui.setOpen(false)
@@ -376,8 +380,8 @@ function PinPanel(props: PanelProps): React.ReactNode {
     }
   }
 
-  renderSection('w', t('panelWorkspaces'), workspacePinned, id => wsById.get(id) ?? id, id => pin.getWorkspaceColor(id), openWorkspace, false)
-  renderSection('s', t('panelSessions'), pinned, id => String(list.byId[id]?.displayTitle ?? id), id => pin.getColor(id), openSession, true)
+  renderSection('w', t('panelWorkspaces'), workspacePinned, id => wsById.get(id) ?? id, id => pin.getWorkspaceEmoji(id), openWorkspace, false)
+  renderSection('s', t('panelSessions'), pinned, id => String(list.byId[id]?.displayTitle ?? id), id => pin.getEmoji(id), openSession, true)
 
   if (rows.length === 0) {
     rows.push(React.createElement('div', { key: '__empty__', className: PANEL_ROW_CLASS }, t('panelEmpty')))
@@ -423,7 +427,7 @@ export function registerSlots(deps: RegisterSlotsDeps): () => void {
   disposers.push(ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     {
       name: 'conversation.session.header.actions',
-      id: 'dsh-session-pin',
+      id: 'dsh-session-emoji',
       order: 50,
       inject: () => ({ pin, t }),
     },
@@ -433,7 +437,7 @@ export function registerSlots(deps: RegisterSlotsDeps): () => void {
   disposers.push(ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
     {
       name: 'sidebar.footer.action',
-      id: 'dsh-session-pin',
+      id: 'dsh-session-emoji',
       order: 50,
       inject: () => ({ pin, ui, t }),
     },
@@ -443,7 +447,7 @@ export function registerSlots(deps: RegisterSlotsDeps): () => void {
   disposers.push(ctx.slots.inject('shell.overlay', () => ctx.slots.register(
     {
       name: 'shell.overlay',
-      id: 'dsh-session-pin-panel',
+      id: 'dsh-session-emoji-panel',
       order: 50,
       inject: () => ({ pin, ui, sessions, workspaces, t, openSession, openWorkspace }),
     },

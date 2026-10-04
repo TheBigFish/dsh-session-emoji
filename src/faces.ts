@@ -4,7 +4,7 @@
  * (controller ↔ overlay ↔ slot components ↔ browser glue). They exist so the
  * framework-free modules stay testable without the deepseek client types
  * and the glue performs the one branded-id adaptation per boundary.
- * @module dsh-session-pin/faces
+ * @module dsh-session-emoji/faces
  */
 
 /** Outcome of one pin commit attempt. */
@@ -12,7 +12,7 @@ export type PinToggleResult = 'pinned' | 'unpinned' | 'limit'
 
 /**
  * Pin-state read/write face the UI consumes: two pin levels (sessions and
- * workspaces) plus the per-level row-color maps.
+ * workspaces) plus the per-level row-emoji maps and the shared recents list.
  */
 export interface PinReadFace {
   getPinned(): readonly string[]
@@ -20,26 +20,35 @@ export interface PinReadFace {
   getWorkspacePinned(): readonly string[]
   isWorkspacePinned(id: string): boolean
   getMaxPins(): number
+  /**
+   * Whether a settings write is still unacknowledged by the Host. Settles true
+   * after every commit and false once the Host republishes the committed value
+   * (or refuses it), so the UI can show a syncing state — and a page reload can
+   * wait for durability instead of racing a queued write.
+   */
+  hasPendingWrites(): boolean
   /** Toggle one session id's membership (store-truth based). */
   toggle(id: string): Promise<PinToggleResult>
-  /** Commit an explicit next session-pin state (projection-aware callers use this). */
+  /** Commit an explicit next session-emoji state (projection-aware callers use this). */
   setPinned(id: string, next: boolean): Promise<PinToggleResult>
   /** Toggle one workspace id's membership (store-truth based). */
   toggleWorkspace(id: string): Promise<PinToggleResult>
   /** Commit an explicit next workspace-pin state. */
   setWorkspacePinned(id: string, next: boolean): Promise<PinToggleResult>
-  /** Stored row color of one session, or undefined. */
-  getColor(id: string): string | undefined
-  /** Stored row color of one workspace, or undefined. */
-  getWorkspaceColor(id: string): string | undefined
-  /** Advance one session's color to the next palette step (wraps to none). */
-  cycleColor(id: string): Promise<void>
-  /** Advance one workspace's color to the next palette step (wraps to none). */
-  cycleWorkspaceColor(id: string): Promise<void>
-  /** Remove one session's color. */
-  clearColor(id: string): Promise<void>
-  /** Remove one workspace's color. */
-  clearWorkspaceColor(id: string): Promise<void>
+  /** Stored row emoji of one session, or undefined. */
+  getEmoji(id: string): string | undefined
+  /** Stored row emoji of one workspace, or undefined. */
+  getWorkspaceEmoji(id: string): string | undefined
+  /** The recently picked emoji, newest first (shared by both levels). */
+  getRecentEmoji(): readonly string[]
+  /** Commit one session emoji (null clears; catalog chars only). */
+  setEmoji(id: string, emoji: string | null): Promise<void>
+  /** Remove one session's emoji. */
+  clearEmoji(id: string): Promise<void>
+  /** Commit one workspace emoji (null clears; catalog chars only). */
+  setWorkspaceEmoji(id: string, emoji: string | null): Promise<void>
+  /** Remove one workspace's emoji. */
+  clearWorkspaceEmoji(id: string): Promise<void>
   /** The board registry (pin groups + membership). */
   getBoards(): import('./navigator.ts').BoardRegistry
   /** The id → tags map. */
@@ -73,7 +82,7 @@ export interface PinOrganizerFace extends PinReadFace {
 /**
  * Optional log-backed write channel (the upstream `session.setPinned` RPC).
  * Absent on baselines without it; a failing remote disables itself until the
- * next connection generation re-enables it. Workspace pins and colors never
+ * next connection generation re-enables it. Workspace pins and emoji never
  * ride this channel — they are plugin-local state.
  */
 export interface PinRemoteLike {
@@ -100,7 +109,7 @@ export interface WorkspaceListFace {
   subscribe(listener: () => void): () => void
 }
 
-/** Dictionary keys of the plugin's `session-pin` locale namespace. */
+/** Dictionary keys of the plugin's `session-emoji` locale namespace. */
 export type PinKey =
   | 'pin'
   | 'unpin'
@@ -108,7 +117,20 @@ export type PinKey =
   | 'pinWorkspace'
   | 'unpinWorkspace'
   | 'limitWorkspace'
-  | 'colorChange'
+  | 'emojiPick'
+  | 'emojiPickerTitle'
+  | 'emojiSearch'
+  | 'emojiRecent'
+  | 'emojiNoResults'
+  | 'emojiMore'
+  | 'categorySmileys'
+  | 'categoryPeople'
+  | 'categoryAnimals'
+  | 'categoryFood'
+  | 'categoryTravel'
+  | 'categoryActivities'
+  | 'categoryObjects'
+  | 'categorySymbols'
   | 'panelTitle'
   | 'panelEmpty'
   | 'panelSessions'

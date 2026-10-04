@@ -8,7 +8,7 @@
  * it never enters React's tree, so hot renders cannot tear it down. Filtering
  * walks the panel rows directly (attribute-driven) and re-applies on DOM
  * churn, so React re-renders cannot permanently break it.
- * @module dsh-session-pin/nav-ui
+ * @module dsh-session-emoji/nav-ui
  */
 
 import type { PinController } from './pin-controller.ts'
@@ -37,10 +37,10 @@ export interface NavOptions {
   readonly enableGoto: boolean
 }
 
-const BAR_CLASS = '__dsh-session-pin-nav__'
-const CHIP_CLASS = '__dsh-session-pin-nav-chip__'
-const CHIP_ACTIVE_CLASS = '__dsh-session-pin-nav-chip-active__'
-const BAR_STYLE_ID = '__dsh-session-pin-nav-bar-style__'
+const BAR_CLASS = '__dsh-session-emoji-nav__'
+const CHIP_CLASS = '__dsh-session-emoji-nav-chip__'
+const CHIP_ACTIVE_CLASS = '__dsh-session-emoji-nav-chip-active__'
+const BAR_STYLE_ID = '__dsh-session-emoji-nav-bar-style__'
 
 /** The bar + health-line stylesheet, injected once. */
 function ensureBarStyle(): void {

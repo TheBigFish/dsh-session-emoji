@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Browser half of the dual-face session-pin plugin. Assembles the pin store
- * (the host half's live `session-pin` Config form, degrading to browser-local
+ * Browser half of the dual-face session-emoji plugin. Assembles the pin store
+ * (the host half's live `session-emoji` Config form, degrading to browser-local
  * storage when the transport cannot carry it), the PinController (two pin
- * levels — sessions and workspaces — plus per-level row colors), the row
- * overlay and row-slot controls, the session-header toggle, the sidebar foot
- * action, and the pinned-sessions panel.
+ * levels — sessions and workspaces — plus per-level row emoji and the shared
+ * recents list), the row overlay and row-slot controls, the shared emoji
+ * picker, the session-header toggle, the sidebar foot action, and the
+ * pinned-sessions panel.
  *
  * Ordering goes through `workspace.insertSessionBefore` / `workspace.insertBefore`:
  * a newly pinned session moves to the front of its workspace account and a
@@ -19,7 +20,7 @@
  * The row slot (`sessions.row.action`) is the authoritative session-row
  * surface; while it is declared the DOM overlay skips session rows entirely
  * (no duplicate pins) and only paints workspace rows, which have no slot.
- * @module dsh-session-pin/client
+ * @module dsh-session-emoji/client
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
@@ -28,6 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { PinController } from './pin-controller.ts'
 import { reorderMoves, topAnchor } from './pin-core.ts'
+import { createEmojiPicker } from './emoji-picker.ts'
 import { createReorderPump, type ReorderMove } from './reorder-pump.ts'
 import { createPinStore, type PinScope, type StorageEventsLike, type StorageLike } from './pin-store.ts'
 import { mountNavigator } from './nav-ui.ts'
@@ -37,9 +39,10 @@ import { LOCALE_DICTS, LOCALE_NS, fallbackTranslate } from './locales.ts'
 import { mountOverlay, type OverlayDoc } from './overlay.ts'
 import { STYLE_TEXT } from './pin-ui-shared.ts'
 import { createPinUiState, registerSlots, type PinSlotsFace } from './ui.ts'
+import { LEGACY_ENTRY_ID, runLegacyImport } from './legacy-import.ts'
 import { mountRowSlot, ROW_SLOT_KEY, type RowSlotRegistryLike } from './row-slot.ts'
 
-export const name = 'session-pin'
+export const name = 'session-emoji'
 
 // `configForms` is the settings domain's client service (`SettingsForms`'s
 // browser counterpart): `get(entryId)` returns the live form for one profile
@@ -55,13 +58,13 @@ export const inject = ['sessions', 'workspaces', 'configForms', 'connection', 's
 /**
  * Profile entry id of the host half's settings form. `0.1.7` names a settings
  * form by the local id of its profile entry, and `cordis.patch.yml` mounts
- * this plugin as `session-pin`; the host half exports the same string as
+ * this plugin as `session-emoji`; the host half exports the same string as
  * `SETTINGS_ENTRY_ID`. Kept as a literal here because the client bundle must
  * not value-import the host half (that would inline schemastery).
  */
-const SETTINGS_ENTRY_ID = 'session-pin'
+const SETTINGS_ENTRY_ID = 'session-emoji'
 /** Plugin identity for style-tag bookkeeping. */
-const PLUGIN_ID = 'dsh-session-pin'
+const PLUGIN_ID = 'dsh-session-emoji'
 
 /** Inject the plugin-owned stylesheet once per factory execution. */
 function injectStyles(): HTMLStyleElement {
@@ -217,7 +220,7 @@ interface ClientCtxFace {
     }),
   }
 
-  // Narrow the runtime workspaces list the same way (workspace pins, colors,
+  // Narrow the runtime workspaces list the same way (workspace pins, emoji,
   // and the panel all read the label/id projection).
   let workspacesCache: ReturnType<WorkspaceListFace['getSnapshot']> | undefined
   const workspacesFace: WorkspaceListFace = {
@@ -251,7 +254,7 @@ interface ClientCtxFace {
     const workspace = snapshot.items.find(item => item.sessionIds.includes(sessionId))
     if (workspace === undefined) {
       // ungrouped: no host-side account to reorder (was silent).
-      warnOnce(`ungrouped:${id}`, `session-pin: session ${id} has no workspace account; host-side reorder skipped`)
+      warnOnce(`ungrouped:${id}`, `session-emoji: session ${id} has no workspace account; host-side reorder skipped`)
       return
     }
     const anchor = topAnchor(workspace.sessionIds as readonly string[], id)
@@ -259,7 +262,7 @@ interface ClientCtxFace {
     try {
       await c.workspaces.insertSessionBefore?.(workspace.workspaceId as WorkspaceId, sessionId, anchor as SessionId)
     } catch (error: unknown) {
-      c.logger.warn(`session-pin: reorder rejected: ${String(error)}`)
+      c.logger.warn(`session-emoji: reorder rejected: ${String(error)}`)
     }
   }
 
@@ -271,7 +274,7 @@ interface ClientCtxFace {
       // Runtime probe: older baselines' workspaces service may predate the
       // workspace-level reorder RPC; the pin state still works without it
       // (was silent).
-      warnOnce('workspace-reorder-unavailable', 'session-pin: workspace-level reorder is unavailable on this baseline; workspace pins keep working without it')
+      warnOnce('workspace-reorder-unavailable', 'session-emoji: workspace-level reorder is unavailable on this baseline; workspace pins keep working without it')
       return
     }
     const items = c.workspaces.list.getSnapshot().items
@@ -280,7 +283,7 @@ interface ClientCtxFace {
     try {
       await insertBefore(id as WorkspaceId, items[0]!.workspaceId as WorkspaceId)
     } catch (error: unknown) {
-      c.logger.warn(`session-pin: workspace reorder rejected: ${String(error)}`)
+      c.logger.warn(`session-emoji: workspace reorder rejected: ${String(error)}`)
     }
   }
 
@@ -315,7 +318,7 @@ interface ClientCtxFace {
       else await moveToTop(move.id)
     },
     onError: (error) => {
-      c.logger.warn(`session-pin: reorder pass failed: ${String(error)}`)
+      c.logger.warn(`session-emoji: reorder pass failed: ${String(error)}`)
     },
   })
 
@@ -350,6 +353,14 @@ interface ClientCtxFace {
   }
   const controller = new PinController(store, sessionsFace, workspacePinSource, reorderer, remote)
   const ui = createPinUiState()
+  // One picker for every surface: the overlay's session/workspace rows and the
+  // row-slot React button all open the same popover. `t` is read lazily, so the
+  // locale binding that lands after apply upgrades the picker's copy live.
+  const picker = createEmojiPicker({
+    doc: document,
+    t: key => translate(key),
+    recent: () => controller.getRecentEmoji(),
+  })
 
   // Navigation organizer feeds: per-session health from the public session
   // snapshots (read-only, sanitized at render) and `/goto` candidates from
@@ -382,7 +393,7 @@ interface ClientCtxFace {
     // locale.register returns the only unregister disposer and throws on a
     // duplicate namespace: hold it on this scope's fiber so unload/reload
     // cycles can re-register the dictionaries.
-    localeCtx.effect(() => localeCtx.locale.register(LOCALE_NS, LOCALE_DICTS), 'dsh-session-pin: dictionaries')
+    localeCtx.effect(() => localeCtx.locale.register(LOCALE_NS, LOCALE_DICTS), 'dsh-session-emoji: dictionaries')
     const bound = localeCtx.locale.bind(LOCALE_NS)
     translate = key => bound(key)
   })
@@ -405,9 +416,26 @@ interface ClientCtxFace {
 
   c.effect(() => {
     controller.start()
+    // Fold in the namespace this plugin was forked from (`session-pin`) once
+    // both entries exist: the rename must not make an existing profile's pins,
+    // emoji, or recents look empty.
+    const disposeLegacyImport = runLegacyImport({
+      scope,
+      legacyScope: () => {
+        try {
+          return c.configForms.get<PinScope>(LEGACY_ENTRY_ID)
+        } catch {
+          return undefined
+        }
+      },
+      storage: guardedStorage(),
+      apply: patch => controller.importSection(patch),
+      logger: c.logger,
+    })
     const disposeRowSlot = mountRowSlot({
       slots: c.slots as unknown as RowSlotRegistryLike,
       pin: controller,
+      picker,
       t: key => translate(key),
     })
     const disposeGate = subscribeSlots(() => {
@@ -417,6 +445,7 @@ interface ClientCtxFace {
       sessions: sessionsFace,
       workspaces: workspacesFace,
       pin: controller,
+      picker,
       t: key => translate(key),
       warn: message => {
         c.logger.warn(message)
@@ -444,7 +473,7 @@ interface ClientCtxFace {
         // not on every click.
         const startSession = c.workspaces.startSession as ((workspaceId?: WorkspaceId) => void) | undefined
         if (typeof startSession === 'function') startSession(id as WorkspaceId)
-        else warnOnce('workspace-open-unavailable', 'session-pin: workspace open unavailable on this baseline')
+        else warnOnce('workspace-open-unavailable', 'session-emoji: workspace open unavailable on this baseline')
       },
     })
     const disposeWorkspaces = c.workspaces.list.subscribe(() => {
@@ -475,7 +504,9 @@ interface ClientCtxFace {
       disposeOverlay()
       disposeGate()
       disposeRowSlot()
+      disposeLegacyImport()
+      picker.dispose()
       controller.stop()
     }
-  }, 'session-pin: pin store, badges, slots, and navigation organizer')
+  }, 'session-emoji: pin store, badges, slots, and navigation organizer')
 }

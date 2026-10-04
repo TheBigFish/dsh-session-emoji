@@ -77,8 +77,9 @@ function fakeRuntimeServices() {
           value: {
             pinned: [],
             workspacePinned: [],
-            colors: {},
-            workspaceColors: {},
+            emoji: {},
+            workspaceEmoji: {},
+            recentEmoji: [],
             maxPins: 0,
             reorderOnLoad: true,
             pruneStale: true,
@@ -92,7 +93,7 @@ function fakeRuntimeServices() {
   }
 }
 
-describe('session-pin client apply on a real cordis graph', () => {
+describe('session-emoji client apply on a real cordis graph', () => {
   let root: Context | undefined
 
   afterEach(async () => {
@@ -125,7 +126,7 @@ describe('session-pin client apply on a real cordis graph', () => {
     // what makes `slots` available to a sibling entry.
     await runtime.await()
 
-    // The session-pin browser half mounts as a separate sibling entry.
+    // The session-emoji browser half mounts as a separate sibling entry.
     const fiber = root.plugin({ name, inject, apply })
 
     // Stringify the outcome: pretty-formatting the fiber proxy itself would

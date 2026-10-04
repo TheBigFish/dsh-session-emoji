@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Changed
+
+- **The plugin is renamed `dsh-session-pin` → `dsh-session-emoji`.** The package, plugin/entry id (`SETTINGS_ENTRY_ID` and the shipped `cordis.patch.yml` row id), locale namespace, `sessions.row.action` contribution id, CSS class prefix (`__dsh-session-emoji-*`), picker option ids (`dsh-session-emoji-option-<n>`), browser-local key (`dsh.session-emoji.pinned`), capability id, repository metadata, and the five READMEs move together. An existing profile does not start empty: `src/legacy-import.ts` folds the former `session-pin` entry's pin lists, emoji maps, recents, and organizer state into the new namespace once, and only into fields that are still empty — a profile already using this plugin keeps its own state, and a second run is a no-op. Without that entry the retired browser-local key `dsh.session-pin.pinned` is read once as a fallback (read-only, never written). The `session/pin` log-event name and the historical entries below are deliberately unchanged, so log-backed projections stay readable.
+- **Row colors are replaced by per-row emoji picked from a searchable popover.** The `[pin][swatch]` pair becomes `[pin][emoji]` everywhere it appears (session row, workspace row, DOM overlay, and the React row slot): clicking the circle after the pin opens an anchored picker with the recently used emoji (up to 12, most-recent-first), eight category tabs, zh/en name and keyword search, and full keyboard navigation (arrows, Enter, Esc). Clicking the currently selected emoji again — or Shift+clicking the row button — clears the badge. The row tint and left accent bar are gone; a row carries one emoji and keeps its normal background, and an unset badge shows as an empty circle so the button stays discoverable. The pinned panel shows each row's emoji read-only next to the existing board/tag controls. One picker instance is shared by both row paths and closes on outside click, anchor removal, or cleanup.
+- **The stored model renames the color maps and grows a recents list.** `colors → emoji`, `workspaceColors → workspaceEmoji`, plus a new `recentEmoji` array; the durable document envelope moves to v4 while v1–v3 documents still decode — with the retired color maps deliberately dropped. Normalization stays fail-closed: a stored emoji is accepted only when it exists in the shipped catalog. The `session/pin` event now carries `emoji` instead of `color`, the projection folds it, and `mirrorSessionPin` writes `{ pinned, emoji }`; a legacy `color` field in an existing log entry is ignored, never replayed as state.
+- **`emoji`/`workspaceEmoji`/`recentEmoji` are `.volatile()` fields of the plugin's own live Config**, alongside the pin lists and organizer state, so the Plugins page can edit them and the browser half reads them through `ctx.configForms.get(entryId)` as before. A migrated `cordis.patch.yml` row needs no manual action: retired keys such as `colors`/`workspaceColors` are ignored on load and never read back as state (they do stay in the YAML, so deleting them by hand is the only remaining cleanup).
+
+### Added
+
+- `src/emoji-data.ts` — generated, checked-in catalog: 1653 fully-qualified sequences across eight categories (smileys, people, animals, food, travel, activities, objects, symbols) with CLDR English and Simplified-Chinese names plus keywords; flags, components, and skin-tone sequences are filtered out so every entry renders as a single badge.
+- `src/emoji-catalog.ts` — module-load index of the catalog with `emojiLabel`, exact-match lookup, per-category row access, and token-AND search capped at 120 rows (a pasted emoji resolves first).
+- `src/emoji-picker.ts` — framework-free DOM picker anchored to the row button with recents strip, category tabs, search box, roving tab stop, fixed-position clamping, and outside-click dismissal; every option carries a stable `dsh-session-emoji-option-<index>` id for tests.
+- `scripts/generate-emoji-data.mjs` and the `pnpm run emoji:generate` script — rebuilds the dataset from `emoji-test.txt` (Unicode 18.0) and CLDR `annotations/{en,zh}.json`, cached under `.cache/`; the build, CI, and runtime never fetch anything. `THIRD_PARTY_NOTICES.md` records the Unicode License v3 attribution.
+- Test coverage for the new surface: `tests/emoji-catalog.test.ts` (12) and `tests/emoji-picker.test.ts` (18), plus emoji assertions threaded through the existing core/store/controller/log/overlay/row-slot/registration/inject/reorder suites. The write path gained its own regression cases in `tests/pin-store.test.ts` and `tests/pin-controller.test.ts`: in-order and coalesced host writes, the refusal retry, and the stale-echo/pending-write state that the live browser pass exposed.
+
+### Removed
+
+- The 8-color preset palette, the cycle button, the row tint and accent bar, the `color` event field, and the `colors`/`workspaceColors` storage fields. Stored hex colors are dropped on migration rather than re-interpreted as emoji.
+
+### Fixed
+
+- **Rapid pin/emoji clicks can no longer end up reverted on the Host.** The settings round trip answers each field about a second later, so a burst used to queue one write per click and could deliver an older value last — a rapid unpin→pin pair landed on the Host as *unpinned* while the sidebar showed it pinned, invisible until the next reload. Host writes are now serialized per field, coalesced latest-wins while a write is in flight, and the client keeps the committed value visible until the Host echoes it back; a write the Host refuses (a revision conflict with a concurrent document edit, answered as `false` rather than an error) is retried once against the refreshed revision and only then rolled back.
+- **A settings write in flight is now observable.** `PinReadFace.hasPendingWrites()` reports whether a committed field still awaits its Host echo, the sidebar foot action carries `data-pending`, and the browser pass waits for that acknowledgement before reloading so a queued write cannot be dropped by the page teardown.
+
 ## [0.7.16] - 2026-09-25
 
 ### Changed

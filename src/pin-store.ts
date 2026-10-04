@@ -1,31 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * PinStore: the persistence adapter between the PinController and the two
- * durable stores — the host half's live `session-pin` Config form (host mode:
+ * durable stores — the host half's live `session-emoji` Config form (host mode:
  * the settings write queue round-trips to the profile patch) and browser-local
  * storage (local mode: memory/unavailable settings — remote browsers and
  * builds whose web proxy does not serve the entry — degrade to per-browser
  * persistence). Mode switches are re-evaluated on every read, so a settings
  * transport that (re-)connects adopts the Host store live.
  *
- * The stored document carries both pin levels (sessions and workspaces) and
- * both color maps. Cross-tab consistency in local mode rides the window
- * `storage` event: a write in another tab republishes through the subscribe
- * feed.
- * @module dsh-session-pin/pin-store
+ * The stored document carries both pin levels (sessions and workspaces), the
+ * per-level row-emoji maps, and the shared recent-emoji list. Cross-tab
+ * consistency in local mode rides the window `storage` event: a write in
+ * another tab republishes through the subscribe feed.
+ * @module dsh-session-emoji/pin-store
  */
-import { decodeStoredPins, emptyStoredPins, encodeStoredPins, normalizeColors, normalizePins } from './pin-core.ts'
+import { decodeStoredPins, emptyStoredPins, encodeStoredPins, normalizeEmojiMap, normalizePins, normalizeRecentEmoji } from './pin-core.ts'
 import { normalizeBoards, normalizeTags, normalizeViews, type BoardRegistry, type SavedView } from './navigator.ts'
 
 /** Browser-local storage key (remote-browser fallback). */
-export const STORAGE_KEY = 'dsh.session-pin.pinned'
+export const STORAGE_KEY = 'dsh.session-emoji.pinned'
 
-/** Pin-section fields of the host half's `session-pin` Config form. */
+/**
+ * Browser-local key of the namespace this plugin was forked from. Read once by
+ * the legacy import (never written) so a profile that only ever used the
+ * browser-local fallback keeps its state across the rename.
+ */
+export const LEGACY_STORAGE_KEY = 'dsh.session-pin.pinned'
+
+/** Pin-section fields of the host half's `session-emoji` Config form. */
 export interface PinSection {
   pinned?: string[]
   workspacePinned?: string[]
-  colors?: Record<string, string>
-  workspaceColors?: Record<string, string>
+  emoji?: Record<string, string>
+  workspaceEmoji?: Record<string, string>
+  recentEmoji?: string[]
   maxPins?: number
   reorderOnLoad?: boolean
   pruneStale?: boolean
@@ -49,10 +57,12 @@ export interface PinStoreSnapshot {
   pinned: string[]
   /** Normalized pinned workspace ids, newest pin first. */
   workspacePinned: string[]
-  /** Session id → palette color. */
-  colors: Record<string, string>
-  /** Workspace id → palette color. */
-  workspaceColors: Record<string, string>
+  /** Session id → shipped emoji char. */
+  emoji: Record<string, string>
+  /** Workspace id → shipped emoji char. */
+  workspaceEmoji: Record<string, string>
+  /** Recently picked emoji, newest first (shared by both levels). */
+  recentEmoji: string[]
   /** Pin groups (boards) and their membership. */
   boards: BoardRegistry
   /** Session/workspace id → tags. */
@@ -79,9 +89,10 @@ export interface PinStoreSnapshot {
  * The settings-form slice the store reads and writes through. Structurally
  * this is the client settings service's `ConfigForm<PinSection>`
  * (`ctx.configForms.get(entryId)`): same snapshot shape, same subscription,
- * same per-field write queue — `set` answers with the Host's acceptance, which
- * the store deliberately does not consume (a refused write reloads the form
- * itself and the next snapshot read reflects the truth).
+ * same per-field write queue — `set` answers with the Host's acceptance:
+ * `false` means the Host did not apply the edit (the form has already re-read
+ * Host state by then), which the store retries once and then reports as a
+ * failed write.
  */
 export interface PinScope {
   getSnapshot(): {
@@ -125,18 +136,84 @@ function isLocalMode(scope: PinScope): boolean {
 }
 
 /**
+ * Write one field through the settings form, honouring its acceptance answer.
+ * A refused write is retried once: the usual cause is a revision conflict with
+ * a concurrent document edit, and the form re-reads Host state after a refusal,
+ * so the retry runs against a fresh revision. Only a second refusal fails.
+ * @param scope - bound settings scope.
+ * @param field - section field to write.
+ * @param value - value to write.
+ */
+async function writeField(scope: PinScope, field: string, value: unknown): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const accepted = await scope.set(field, value)
+    if (accepted !== false) return
+  }
+  throw new Error(`the Host did not accept the ${field} write`)
+}
+
+/**
  * Build the pin store over one settings scope and one browser-local storage.
- * @param scope - bound `session-pin` settings scope.
+ * @param scope - bound `session-emoji` settings scope.
  * @param storage - browser-local key/value storage.
  * @param storageEvents - window storage-event source.
  * @returns the store face.
  */
 export function createPinStore(scope: PinScope, storage: StorageLike, storageEvents: StorageEventsLike): PinStore {
+  /** One in-flight write per field plus the latest value queued behind it. */
+  const fieldWrites = new Map<string, {
+    running: boolean
+    queued?: { value: unknown; settle: Array<{ resolve: () => void; reject: (error: unknown) => void }> }
+  }>()
+
+  /**
+   * Drain one field: write the queued value, then re-check — a newer value that
+   * arrived meanwhile replaced the queue entry and is written next.
+   * @param field - section field to drain.
+   */
+  const drainField = async (field: string): Promise<void> => {
+    const state = fieldWrites.get(field)
+    if (state === undefined) return
+    while (state.queued !== undefined) {
+      const { value, settle } = state.queued
+      state.queued = undefined
+      try {
+        await writeField(scope, field, value)
+        for (const waiter of settle) waiter.resolve()
+      } catch (error) {
+        for (const waiter of settle) waiter.reject(error)
+      }
+    }
+    state.running = false
+  }
+
+  /**
+   * Queue one field write, coalescing with an unstarted predecessor: the newest
+   * value wins and the superseded callers settle as covered by it.
+   * @param field - section field to write.
+   * @param value - value to write.
+   * @returns resolution once this value or a newer one has been applied.
+   */
+  const queueField = (field: string, value: unknown): Promise<void> => {
+    const state = fieldWrites.get(field) ?? { running: false }
+    fieldWrites.set(field, state)
+    return new Promise<void>((resolve, reject) => {
+      if (state.queued === undefined) state.queued = { value, settle: [] }
+      else state.queued.value = value
+      state.queued.settle.push({ resolve, reject })
+      if (!state.running) {
+        state.running = true
+        void drainField(field)
+      }
+    })
+  }
+
   const readLocal = (): {
     pinned: string[]
     workspacePinned: string[]
-    colors: Record<string, string>
-    workspaceColors: Record<string, string>
+    emoji: Record<string, string>
+    workspaceEmoji: Record<string, string>
+    recentEmoji: string[]
     boards: BoardRegistry
     tags: Record<string, string[]>
     views: SavedView[]
@@ -170,8 +247,9 @@ export function createPinStore(scope: PinScope, storage: StorageLike, storageEve
     return {
       pinned: normalizePins(value?.pinned ?? []),
       workspacePinned: normalizePins(value?.workspacePinned ?? []),
-      colors: normalizeColors(value?.colors ?? {}),
-      workspaceColors: normalizeColors(value?.workspaceColors ?? {}),
+      emoji: normalizeEmojiMap(value?.emoji ?? {}),
+      workspaceEmoji: normalizeEmojiMap(value?.workspaceEmoji ?? {}),
+      recentEmoji: normalizeRecentEmoji(value?.recentEmoji ?? []),
       boards: normalizeBoards(value?.boards),
       tags: normalizeTags(value?.tags),
       views: normalizeViews(value?.views),
@@ -194,8 +272,9 @@ export function createPinStore(scope: PinScope, storage: StorageLike, storageEve
         const doc = readLocal()
         if (section.pinned !== undefined) doc.pinned = normalizePins(section.pinned)
         if (section.workspacePinned !== undefined) doc.workspacePinned = normalizePins(section.workspacePinned)
-        if (section.colors !== undefined) doc.colors = normalizeColors(section.colors)
-        if (section.workspaceColors !== undefined) doc.workspaceColors = normalizeColors(section.workspaceColors)
+        if (section.emoji !== undefined) doc.emoji = normalizeEmojiMap(section.emoji)
+        if (section.workspaceEmoji !== undefined) doc.workspaceEmoji = normalizeEmojiMap(section.workspaceEmoji)
+        if (section.recentEmoji !== undefined) doc.recentEmoji = normalizeRecentEmoji(section.recentEmoji)
         if (section.boards !== undefined) doc.boards = normalizeBoards(section.boards)
         if (section.tags !== undefined) doc.tags = normalizeTags(section.tags)
         if (section.views !== undefined) doc.views = normalizeViews(section.views)
@@ -206,9 +285,19 @@ export function createPinStore(scope: PinScope, storage: StorageLike, storageEve
         }
         return
       }
-      // Host mode: the settings write queue carries each field separately.
+      // Host mode: the settings round trip takes about a second per field, so
+      // writes are serialized per field and coalesced latest-wins. Ordering
+      // matters — the transport may deliver an older value last and silently
+      // revert the newest one (a rapid unpin→pin pair ending unpinned,
+      // invisible until the next reload); coalescing matters because a burst of
+      // clicks must not queue a second of writes per click, all of which the
+      // page would drop on reload. A write the Host refuses (its form resolves
+      // `false`: a revision conflict with a concurrent document edit is the
+      // usual cause) is retried once, when the form has re-read Host state, and
+      // only then reported as failed so the caller can drop its optimistic
+      // value.
       const writes: Array<Promise<unknown>> = []
-      for (const [field, value] of Object.entries(section)) writes.push(scope.set(field, value))
+      for (const [field, value] of Object.entries(section)) writes.push(queueField(field, value))
       return Promise.all(writes).then(() => undefined)
     },
     subscribe(listener) {

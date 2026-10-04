@@ -3,24 +3,14 @@
  * Pure pin-set logic shared by the host half, the browser half, the
  * controller, and the unit tests. No DOM, no cordis, no I/O: everything here
  * is a deterministic transform. Two pin levels share this module — sessions
- * and workspaces — plus the preset row-color palette the swatch button cycles.
- * @module dsh-session-pin/pin-core
+ * and workspaces — plus the per-row emoji decoration: one shipped emoji char
+ * per entity, validated against the generated catalog.
+ * @module dsh-session-emoji/pin-core
  */
+import { EMOJI_BY_CHAR } from './emoji-catalog.ts'
 
-/** Preset row-color palette cycled by the swatch button (the only values the store accepts). */
-export const PIN_COLOR_PALETTE = [
-  '#f97316', // orange
-  '#eab308', // yellow
-  '#22c55e', // green
-  '#14b8a6', // teal
-  '#0ea5e9', // sky
-  '#6366f1', // indigo
-  '#a855f7', // purple
-  '#ec4899', // pink
-] as const
-
-/** One palette hex literal. */
-export type PinColorHex = (typeof PIN_COLOR_PALETTE)[number]
+/** Maximum remembered recently-used emoji, shared by both levels. */
+export const MAX_RECENT_EMOJI = 12
 
 /**
  * Normalize an unknown pin list (settings wire value or localStorage JSON):
@@ -70,85 +60,102 @@ export function topAnchor(orderedIds: readonly string[], id: string): string | u
   return orderedIds[0]
 }
 
-// ── Row colors ────────────────────────────────────────────────────────────
+// ── Row emoji ─────────────────────────────────────────────────────────────
 
-/** Whether a candidate value is one of the preset palette hexes. */
-export function isPaletteColor(value: unknown): value is PinColorHex {
-  return typeof value === 'string' && (PIN_COLOR_PALETTE as readonly string[]).includes(value)
+/** Whether a candidate value is one shipped emoji char (the only values the store accepts). */
+export function isEmojiChar(value: unknown): value is string {
+  return typeof value === 'string' && EMOJI_BY_CHAR.has(value)
 }
 
 /**
- * Normalize an unknown id→color map: non-empty string keys only, values kept
- * only when they are preset palette hexes (the row tint is class-based, so
- * arbitrary values could not render and would only diverge the store).
- * @param value - candidate color map from the settings wire or storage.
+ * Normalize one unknown emoji value: a shipped emoji char, or undefined.
+ * Arbitrary strings fail closed — only catalog members can render.
+ * @param value - candidate emoji from the settings wire, log, or storage.
+ * @returns the accepted char, or undefined.
+ */
+export function normalizeEmoji(value: unknown): string | undefined {
+  return isEmojiChar(value) ? value : undefined
+}
+
+/**
+ * Normalize an unknown id→emoji map: non-empty string keys only, values kept
+ * only when they are shipped emoji chars (an unknown sequence could not render
+ * and would only diverge the store).
+ * @param value - candidate emoji map from the settings wire or storage.
  * @returns the normalized map.
  */
-export function normalizeColors(value: unknown): Record<string, string> {
+export function normalizeEmojiMap(value: unknown): Record<string, string> {
   const out: Record<string, string> = {}
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return out
-  for (const [key, color] of Object.entries(value as Record<string, unknown>)) {
-    if (key.length === 0 || !isPaletteColor(color)) continue
-    out[key] = color
+  for (const [key, emoji] of Object.entries(value as Record<string, unknown>)) {
+    if (key.length === 0 || !isEmojiChar(emoji)) continue
+    out[key] = emoji
   }
   return out
 }
 
 /**
- * Palette index of a stored color (for the `data-color="cN"` class hook), or
- * undefined when the row has no color.
- * @param color - stored color or nothing.
- * @returns the zero-based palette index.
+ * Normalize the recent-emoji list: shipped chars only, deduplicated, order
+ * preserved, capped at {@link MAX_RECENT_EMOJI}.
+ * @param value - candidate recents from the settings wire or storage.
+ * @returns the normalized list (newest first).
  */
-export function colorClassIndex(color: string | null | undefined): number | undefined {
-  if (color === null || color === undefined) return undefined
-  const index = (PIN_COLOR_PALETTE as readonly string[]).indexOf(color)
-  return index === -1 ? undefined : index
+export function normalizeRecentEmoji(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of value) {
+    if (!isEmojiChar(item) || seen.has(item)) continue
+    seen.add(item)
+    out.push(item)
+    if (out.length >= MAX_RECENT_EMOJI) break
+  }
+  return out
 }
 
 /**
- * The swatch cycle: none → palette[0] → palette[1] → … → none. Unknown values
- * restart at palette[0]; null means "no color".
- * @param current - current stored color, or nothing.
- * @returns the next color, or null when the cycle leaves the palette (clear).
+ * Remember one freshly picked emoji: move it to the front, dedupe, cap the
+ * list. Unknown chars leave the list untouched.
+ * @param recent - current normalized recents (newest first).
+ * @param emoji - the picked emoji.
+ * @returns the next recents list.
  */
-export function nextPaletteColor(current: string | null | undefined): string | null {
-  if (typeof current !== 'string') return PIN_COLOR_PALETTE[0]
-  const index = (PIN_COLOR_PALETTE as readonly string[]).indexOf(current)
-  if (index === -1) return PIN_COLOR_PALETTE[0]
-  return index + 1 < PIN_COLOR_PALETTE.length ? PIN_COLOR_PALETTE[index + 1]! : null
+export function rememberEmoji(recent: readonly string[], emoji: string): string[] {
+  if (!isEmojiChar(emoji)) return [...recent]
+  return [emoji, ...recent.filter(item => item !== emoji)].slice(0, MAX_RECENT_EMOJI)
 }
 
 /**
- * Convert a `#rrggbb` hex to an `rgba()` literal (for the generated tint CSS).
- * @param hex - palette hex.
- * @param alpha - 0..1 alpha.
- * @returns the rgba literal, or 'transparent' for malformed input.
+ * Drop emoji entries whose ids are absent from the live set (emoji ride
+ * entity lifetime; unpinning alone never clears one).
+ * @param emoji - normalized id→emoji map.
+ * @param liveIds - the ids a ready list currently contains.
+ * @returns the pruned map.
  */
-export function hexToRgba(hex: string, alpha: number): string {
-  const match = /^#([0-9a-f]{6})$/i.exec(hex)
-  if (match === null) return 'transparent'
-  const n = Number.parseInt(match[1]!, 16)
-  const r = (n >> 16) & 0xff
-  const g = (n >> 8) & 0xff
-  const b = n & 0xff
-  return `rgba(${r},${g},${b},${alpha})`
+export function pruneEmoji(emoji: Record<string, string>, liveIds: ReadonlySet<string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [id, char] of Object.entries(emoji)) {
+    if (liveIds.has(id)) out[id] = char
+  }
+  return out
 }
 
 // ── Browser-local storage envelope ────────────────────────────────────────
 
 import { emptyBoards, normalizeBoards, normalizeTags, normalizeViews, type BoardRegistry, type SavedView } from './navigator.ts'
 
-/** The complete pin document the browser-local store persists (v3). */
+/** The complete pin document the browser-local store persists (v4). */
 export interface StoredPinsDoc {
   /** Normalized pinned session ids, newest pin first. */
   pinned: string[]
   /** Normalized pinned workspace ids, newest pin first. */
   workspacePinned: string[]
-  /** Session id → palette color. */
-  colors: Record<string, string>
-  /** Workspace id → palette color. */
-  workspaceColors: Record<string, string>
+  /** Session id → shipped emoji char. */
+  emoji: Record<string, string>
+  /** Workspace id → shipped emoji char. */
+  workspaceEmoji: Record<string, string>
+  /** Recently picked emoji, newest first (capped). */
+  recentEmoji: string[]
   /** Pin groups (boards) and their membership. */
   boards: BoardRegistry
   /** Session/workspace id → tags. */
@@ -159,13 +166,22 @@ export interface StoredPinsDoc {
 
 /** Empty document baseline. */
 export function emptyStoredPins(): StoredPinsDoc {
-  return { pinned: [], workspacePinned: [], colors: {}, workspaceColors: {}, boards: emptyBoards(), tags: {}, views: [] }
+  return {
+    pinned: [],
+    workspacePinned: [],
+    emoji: {},
+    workspaceEmoji: {},
+    recentEmoji: [],
+    boards: emptyBoards(),
+    tags: {},
+    views: [],
+  }
 }
 
-/** Versioned browser-local storage envelope (v3). */
-export interface StoredPinsV3 extends StoredPinsDoc {
+/** Versioned browser-local storage envelope (v4). */
+export interface StoredPinsV4 extends StoredPinsDoc {
   /** Envelope version discriminator. */
-  v: 3
+  v: 4
 }
 
 /**
@@ -175,12 +191,13 @@ export interface StoredPinsV3 extends StoredPinsDoc {
  * @returns the JSON document to store.
  */
 export function encodeStoredPins(doc: StoredPinsDoc): string {
-  const payload: StoredPinsV3 = {
-    v: 3,
+  const payload: StoredPinsV4 = {
+    v: 4,
     pinned: [...doc.pinned],
     workspacePinned: [...doc.workspacePinned],
-    colors: { ...doc.colors },
-    workspaceColors: { ...doc.workspaceColors },
+    emoji: { ...doc.emoji },
+    workspaceEmoji: { ...doc.workspaceEmoji },
+    recentEmoji: normalizeRecentEmoji(doc.recentEmoji),
     boards: normalizeBoards(doc.boards),
     tags: normalizeTags(doc.tags),
     views: normalizeViews(doc.views),
@@ -189,10 +206,12 @@ export function encodeStoredPins(doc: StoredPinsDoc): string {
 }
 
 /**
- * Decode a stored pin document: the v3 envelope (full navigator data), the
- * v2 envelope (pins + colors), the v1 envelope (session pins only), or a
- * legacy bare string array from pre-envelope versions. Older documents
- * migrate forward with empty boards/tags/views; malformed input yields the
+ * Decode a stored pin document: the v4 envelope (full navigator data), the
+ * v3 envelope (pins + colors + navigator data), the v2 envelope (pins +
+ * colors), the v1 envelope (session pins only), or a legacy bare string array
+ * from pre-envelope versions. Older documents migrate forward with empty
+ * boards/tags/views/emoji; the retired color maps are deliberately NOT
+ * carried over (the emoji feature replaced them). Malformed input yields the
  * empty document.
  * @param value - parsed JSON from browser-local storage.
  * @returns the normalized pin document.
@@ -205,8 +224,9 @@ export function decodeStoredPins(value: unknown): StoredPinsDoc {
       v?: unknown
       pinned?: unknown
       workspacePinned?: unknown
-      colors?: unknown
-      workspaceColors?: unknown
+      emoji?: unknown
+      workspaceEmoji?: unknown
+      recentEmoji?: unknown
       boards?: unknown
       tags?: unknown
       views?: unknown
@@ -219,16 +239,25 @@ export function decodeStoredPins(value: unknown): StoredPinsDoc {
         ...empty,
         pinned: normalizePins(candidate.pinned),
         workspacePinned: normalizePins(candidate.workspacePinned),
-        colors: normalizeColors(candidate.colors),
-        workspaceColors: normalizeColors(candidate.workspaceColors),
       }
     }
     if (candidate.v === 3) {
       return {
+        ...empty,
         pinned: normalizePins(candidate.pinned),
         workspacePinned: normalizePins(candidate.workspacePinned),
-        colors: normalizeColors(candidate.colors),
-        workspaceColors: normalizeColors(candidate.workspaceColors),
+        boards: normalizeBoards(candidate.boards),
+        tags: normalizeTags(candidate.tags),
+        views: normalizeViews(candidate.views),
+      }
+    }
+    if (candidate.v === 4) {
+      return {
+        pinned: normalizePins(candidate.pinned),
+        workspacePinned: normalizePins(candidate.workspacePinned),
+        emoji: normalizeEmojiMap(candidate.emoji),
+        workspaceEmoji: normalizeEmojiMap(candidate.workspaceEmoji),
+        recentEmoji: normalizeRecentEmoji(candidate.recentEmoji),
         boards: normalizeBoards(candidate.boards),
         tags: normalizeTags(candidate.tags),
         views: normalizeViews(candidate.views),
@@ -247,21 +276,6 @@ export function decodeStoredPins(value: unknown): StoredPinsDoc {
  */
 export function prunePins(pinned: readonly string[], liveIds: ReadonlySet<string>): string[] {
   return pinned.filter(id => liveIds.has(id))
-}
-
-/**
- * Drop color entries whose ids are absent from the live set (colors ride
- * entity lifetime; unpinning alone never clears a color).
- * @param colors - normalized id→color map.
- * @param liveIds - the ids a ready list currently contains.
- * @returns the pruned map.
- */
-export function pruneColors(colors: Record<string, string>, liveIds: ReadonlySet<string>): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [id, color] of Object.entries(colors)) {
-    if (liveIds.has(id)) out[id] = color
-  }
-  return out
 }
 
 /**

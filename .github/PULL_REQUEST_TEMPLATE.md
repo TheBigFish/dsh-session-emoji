@@ -1,4 +1,4 @@
-<!-- Thank you for contributing to dsh-session-pin! -->
+<!-- Thank you for contributing to dsh-session-emoji! -->
 
 ## Checklist
 

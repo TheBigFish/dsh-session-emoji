@@ -9,7 +9,7 @@
  * host half registers through `ctx.effect` is what makes unload/reload safe —
  * exactly the role the removed namespace registration's fiber effect played.
  *
- * @module dsh-session-pin/test/lifecycle.test
+ * @module dsh-session-emoji/test/lifecycle.test
  */
 
 import { describe, expect, it } from 'vitest'
@@ -60,9 +60,9 @@ describe('export contract', () => {
     const loader = Object.create(Loader.prototype)
     const unwrapped = loader.unwrapExports(plugin)
     expect(unwrapped).toBe(plugin)
-    expect(unwrapped.name).toBe('session-pin')
+    expect(unwrapped.name).toBe('session-emoji')
     expect(unwrapped.inject).toEqual(['settings'])
-    expect(unwrapped.SETTINGS_ENTRY_ID).toBe('session-pin')
+    expect(unwrapped.SETTINGS_ENTRY_ID).toBe('session-emoji')
     expect(typeof unwrapped.Config).toBe('function')
     expect(typeof unwrapped.apply).toBe('function')
   })
@@ -93,6 +93,6 @@ describe('fiber disposal', () => {
   })
 
   it('keeps the entry id the browser half binds to', () => {
-    expect(SETTINGS_ENTRY_ID).toBe('session-pin')
+    expect(SETTINGS_ENTRY_ID).toBe('session-emoji')
   })
 })

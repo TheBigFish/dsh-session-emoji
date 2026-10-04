@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plugin copy: the `session-pin` locale namespace (dictionary keys merged
+ * Plugin copy: the `session-emoji` locale namespace (dictionary keys merged
  * into the slot system's LocaleNamespaceMap so the typed `bind`/`register`
  * faces check every key), the zh/en dictionaries, and the English fallback
  * used when no locale service is mounted in the composition.
- * @module dsh-session-pin/locales
+ * @module dsh-session-emoji/locales
  */
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type { PinKey } from './faces.ts'
 
 /** Namespace owning this plugin's copy. */
-export const LOCALE_NS = 'session-pin'
+export const LOCALE_NS = 'session-emoji'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    'session-pin': PinKey
+    'session-emoji': PinKey
   }
 }
 
@@ -26,7 +26,20 @@ export const ENGLISH: Record<PinKey, string> = {
   pinWorkspace: 'Pin workspace',
   unpinWorkspace: 'Unpin workspace',
   limitWorkspace: 'Workspace pin limit reached; unpin another workspace first',
-  colorChange: 'Change row color (click to cycle, Shift+click to clear)',
+  emojiPick: 'Select emoji (Shift+click to clear)',
+  emojiPickerTitle: 'Choose an emoji',
+  emojiSearch: 'Search emoji…',
+  emojiRecent: 'Recently used',
+  emojiNoResults: 'No matching emoji',
+  emojiMore: 'More matches — keep typing to narrow the list',
+  categorySmileys: 'Smileys',
+  categoryPeople: 'People',
+  categoryAnimals: 'Animals',
+  categoryFood: 'Food',
+  categoryTravel: 'Travel',
+  categoryActivities: 'Activity',
+  categoryObjects: 'Objects',
+  categorySymbols: 'Symbols',
   panelTitle: 'Pinned sessions',
   panelEmpty: 'Nothing pinned yet',
   panelSessions: 'Sessions',
@@ -49,7 +62,20 @@ export const LOCALE_DICTS: { zh: Record<PinKey, string>; en: Record<PinKey, stri
     pinWorkspace: '置顶工作区',
     unpinWorkspace: '取消工作区置顶',
     limitWorkspace: '已达工作区置顶上限，请先取消其他工作区',
-    colorChange: '更换行颜色（点击循环切换，Shift+点击清除）',
+    emojiPick: '选择表情（Shift+点击清除）',
+    emojiPickerTitle: '选择表情',
+    emojiSearch: '搜索表情…',
+    emojiRecent: '最近使用',
+    emojiNoResults: '没有匹配的表情',
+    emojiMore: '结果过多，继续输入以缩小范围',
+    categorySmileys: '笑脸',
+    categoryPeople: '人物',
+    categoryAnimals: '动物',
+    categoryFood: '食物',
+    categoryTravel: '旅行',
+    categoryActivities: '活动',
+    categoryObjects: '物品',
+    categorySymbols: '符号',
     panelTitle: '已置顶的会话',
     panelEmpty: '还没有置顶任何内容',
     panelSessions: '会话',

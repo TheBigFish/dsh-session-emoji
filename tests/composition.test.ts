@@ -10,7 +10,7 @@
  * invalid config must fail loud, and a default export must not silently mount
  * a schema-less stand-in that accepts one.
  *
- * @module dsh-session-pin/test/composition.test
+ * @module dsh-session-emoji/test/composition.test
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
@@ -26,7 +26,7 @@ const builtEntry = join(repositoryRoot, 'lib', 'index.js')
 const builtUrl = pathToFileURL(builtEntry).href
 
 /** Profile entry id the bundle patch mounts (`cordis.patch.yml`) and the browser half binds. */
-const ENTRY_ID = 'session-pin'
+const ENTRY_ID = 'session-emoji'
 
 /** One cordis.yml: just the plugin row with optional config. */
 function configFor(pluginRow: string, configLines: string[] = []): string {
@@ -49,7 +49,7 @@ function runRunner(configPath: string) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
-const temporaryRoot = mkdtempSync(join(tmpdir(), 'dsh-session-pin-loader-'))
+const temporaryRoot = mkdtempSync(join(tmpdir(), 'dsh-session-emoji-loader-'))
 
 beforeAll(() => {
   const build = spawnSync('pnpm', ['run', 'build'], {

@@ -21,7 +21,7 @@ for (const rel of ['lib/index.js', 'lib/client.js']) {
 
 // 2. The ESM host face must import under plain Node (no tsx, no checkout paths).
 const index = await import(pathToFileURL(path.join(root, 'lib/index.js')).href)
-if (typeof index.apply !== 'function' || index.name !== 'session-pin') {
+if (typeof index.apply !== 'function' || index.name !== 'session-emoji') {
   throw new Error('lib/index.js exports an unexpected plugin face')
 }
 
@@ -30,7 +30,7 @@ const client = readFileSync(path.join(root, 'lib/client.js'), 'utf8')
 if (!client.includes('window.__ModuleLoader__.load({')) {
   throw new Error('lib/client.js is missing the ModuleLoader handshake')
 }
-if (!/id:\s*"dsh-session-pin"/.test(client)) {
+if (!/id:\s*"dsh-session-emoji"/.test(client)) {
   throw new Error('lib/client.js stamps the wrong bundle id')
 }
 

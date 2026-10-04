@@ -27,7 +27,7 @@
  *    order cannot change that order, which is exactly the loop. A real order
  *    change re-arms issuance, and so does {@link ReorderPump.reset} on a
  *    transport reconnect.
- * @module dsh-session-pin/reorder-pump
+ * @module dsh-session-emoji/reorder-pump
  */
 
 /** One planned re-assertion: an entity whose list front must change. */

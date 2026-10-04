@@ -1,49 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Host half of the dual-face session-pin plugin. On the `0.1.7` settings
+ * Host half of the dual-face session-emoji plugin. On the `0.1.7` settings
  * contract a plugin's durable settings surface IS its own live Config: the
  * profile entry's id names the form, every `.volatile()` field is a
  * user-editable, live-updatable value persisted in the profile patch, and the
  * browser half reads exactly those fields through `configForms.get(entryId)`.
  *
- * So this half declares the whole former `session-pin` namespace as volatile
- * Config fields: the user layer (both pin levels, both row-color maps, and the
- * organizer state) plus the host policy (`maxPins`, `reorderOnLoad`,
- * `pruneStale`, and the five feature switches) that the browser half reads
- * from the same resolved snapshot. `enableLogBacking` stays ordinary Config —
- * it was never part of the editable namespace, and it is a host-only switch.
+ * So this half declares the whole former `session-emoji` namespace as volatile
+ * Config fields: the user layer (both pin levels, both row-emoji maps, the
+ * shared recent-emoji list, and the organizer state) plus the host policy
+ * (`maxPins`, `reorderOnLoad`, `pruneStale`, and the five feature switches)
+ * that the browser half reads from the same resolved snapshot.
+ * `enableLogBacking` stays ordinary Config — it was never part of the editable
+ * namespace, and it is a host-only switch.
  *
  * Canonical residence (P0): when `enableLogBacking` is on, this half also
  * mounts a projection reader over the `session/pin` event log (see
  * `pin-log.ts`) — it folds live `session/event` events back into the pin set
- * and mirrors the folded `pinned`/`colors` into the live Config, which then
+ * and mirrors the folded `pinned`/`emoji` into the live Config, which then
  * serves as the idempotent cache for the log-backed canonical state. The
  * volatile Config (and the browser-local fallback) remain the compat +
  * degradation path; the session log is authoritative when log-backing is
- * enabled. Workspace pins, both color maps' workspace half, and the organizer
- * metadata stay plugin-local state and never ride the session log.
+ * enabled. Workspace pins, both emoji maps' workspace half, the recents list,
+ * and the organizer metadata stay plugin-local state and never ride the
+ * session log.
  *
- * @module dsh-session-pin
+ * @module dsh-session-emoji
  */
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 // Type-only: declares the `ctx.settings` (SettingsForms) Context merge.
 import type {} from '@deepseek-ai/dsh-settings'
-import { normalizeColors, normalizePins } from './pin-core.ts'
+import { normalizeEmoji, normalizeEmojiMap, normalizePins } from './pin-core.ts'
 import type { BoardRegistry, SavedView } from './navigator.ts'
 import { PIN_EVENT, normalizePinEventValue, type PinLogValue } from './pin-log.ts'
 
-export const name = 'session-pin'
+export const name = 'session-emoji'
 
 export const inject = ['settings']
 
 /**
  * Profile entry id carrying this plugin's settings form. The `0.1.7` contract
  * names a form by the local id of its profile entry, and `cordis.patch.yml`
- * mounts this plugin as `session-pin`; the browser half binds the same string
+ * mounts this plugin as `session-emoji`; the browser half binds the same string
  * through `configForms.get()`, so the two halves agree by construction.
  */
-export const SETTINGS_ENTRY_ID = 'session-pin'
+export const SETTINGS_ENTRY_ID = 'session-emoji'
 
 /** Required host policy plus the user layer; every live field is a `Volatile` reference. */
 export interface Config {
@@ -51,10 +53,12 @@ export interface Config {
   pinned: Volatile<string[]>
   /** Ordered pinned workspace ids (newest pin first). */
   workspacePinned: Volatile<string[]>
-  /** Session id → preset palette color. */
-  colors: Volatile<Record<string, string>>
-  /** Workspace id → preset palette color. */
-  workspaceColors: Volatile<Record<string, string>>
+  /** Session id → shipped emoji char. */
+  emoji: Volatile<Record<string, string>>
+  /** Workspace id → shipped emoji char. */
+  workspaceEmoji: Volatile<Record<string, string>>
+  /** Recently picked emoji, newest first (shared by both levels). */
+  recentEmoji: Volatile<string[]>
   /** Pin groups (boards) and their membership. */
   boards: Volatile<BoardRegistry>
   /** Session/workspace id → tags. */
@@ -65,7 +69,7 @@ export interface Config {
   maxPins: Volatile<number>
   /** Re-assert the pinned prefixes (newest pin first) once the lists are ready. */
   reorderOnLoad: Volatile<boolean>
-  /** Drop pins/colors for entities absent from a ready list (deleted/archived). */
+  /** Drop pins/emoji for entities absent from a ready list (deleted/archived). */
   pruneStale: Volatile<boolean>
   /** Enable pin groups (boards) in the sidebar. */
   enableBoards: Volatile<boolean>
@@ -79,14 +83,14 @@ export interface Config {
   enableGoto: Volatile<boolean>
   /**
    * Gate the log-backed canonical pin residence: fold `session/pin` events
-   * into a projection and mirror the folded pin set + colors into the live
+   * into a projection and mirror the folded pin set + emoji into the live
    * Config cache. Fail-closed default `false` — enable on builds that emit
    * the `session/pin` event (upstream `session.setPinned` RPC or this
    * plugin's own appender); on baselines without it the reader simply never
    * folds and the volatile Config remains the durable path.
    *
    * Host-only switch: deliberately NOT volatile, because it was never a field
-   * of the old `session-pin` settings namespace and no browser half reads it.
+   * of the old `session-emoji` settings namespace and no browser half reads it.
    */
   enableLogBacking: boolean
 }
@@ -109,8 +113,9 @@ export interface Config {
 export const Config = z.object({
   pinned: z.array(z.string()).default([]).volatile(),
   workspacePinned: z.array(z.string()).default([]).volatile(),
-  colors: z.dict(z.string()).default({}).volatile(),
-  workspaceColors: z.dict(z.string()).default({}).volatile(),
+  emoji: z.dict(z.string()).default({}).volatile(),
+  workspaceEmoji: z.dict(z.string()).default({}).volatile(),
+  recentEmoji: z.array(z.string()).default([]).volatile(),
   boards: z.any().default({}).volatile(),
   tags: z.dict(z.array(z.string())).default({}).volatile(),
   views: z.array(z.any()).default([]).volatile(),
@@ -131,10 +136,12 @@ export interface PinUserLayer {
   pinned: string[]
   /** Ordered pinned workspace ids (newest pin first). */
   workspacePinned: string[]
-  /** Session id → preset palette color. */
-  colors: Record<string, string>
-  /** Workspace id → preset palette color. */
-  workspaceColors: Record<string, string>
+  /** Session id → shipped emoji char. */
+  emoji: Record<string, string>
+  /** Workspace id → shipped emoji char. */
+  workspaceEmoji: Record<string, string>
+  /** Recently picked emoji, newest first (shared by both levels). */
+  recentEmoji: string[]
   /** Pin groups (boards) and their membership. */
   boards: Record<string, unknown>
   /** Session/workspace id → tags. */
@@ -164,7 +171,7 @@ export function apply(ctx: Context, config: Config): void {
   // disposer on this plugin's fiber so unload/reload re-registers cleanly
   // (SettingsForms.configure throws for an instance that already has one).
   ctx.inject(['settings'], (child) => {
-    child.effect(() => child.settings.configure({ auto: true }, ctx.fiber), 'session-pin: settings presentation')
+    child.effect(() => child.settings.configure({ auto: true }, ctx.fiber), 'session-emoji: settings presentation')
   })
   if (config.enableLogBacking) mountPinProjection(ctx, config)
 }
@@ -189,7 +196,7 @@ function mountPinProjection(ctx: Context, config: Config): void {
     const value = normalizePinEventValue(id, candidate.data)
     if (value === undefined) return
     void mirrorSessionPin(ctx, config, value).catch((error: unknown) => {
-      ctx.logger.warn(`session-pin: pin projection mirror failed: ${String(error)}`)
+      ctx.logger.warn(`session-emoji: pin projection mirror failed: ${String(error)}`)
     })
   })
 }
@@ -197,7 +204,7 @@ function mountPinProjection(ctx: Context, config: Config): void {
 /**
  * Merge one folded session into the live Config cache: pinning moves the
  * session to the front of the pinned list, unpinning removes it, and a defined
- * color sets or clears the row color — leaving every other session's state
+ * emoji sets or clears the row emoji — leaving every other session's state
  * intact. The read is the plugin's own stable volatile reference (so it sees
  * both the composition value and every earlier mirror and user edit); the
  * write goes through the settings service, which merges it into the profile
@@ -211,8 +218,11 @@ async function mirrorSessionPin(ctx: Context, config: Config, value: PinLogValue
   const pinned = value.pinned
     ? [value.sessionId, ...normalizePins(current).filter(id => id !== value.sessionId)]
     : normalizePins(current).filter(id => id !== value.sessionId)
-  const colors = normalizeColors(config.colors.get())
-  if (value.color === null) delete colors[value.sessionId]
-  else if (value.color !== undefined) colors[value.sessionId] = value.color
-  await ctx.settings.update(SETTINGS_ENTRY_ID, { pinned, colors })
+  const emoji = { ...normalizeEmojiMap(config.emoji.get()) }
+  if (value.emoji === null) delete emoji[value.sessionId]
+  else if (value.emoji !== undefined) {
+    const accepted = normalizeEmoji(value.emoji)
+    if (accepted !== undefined) emoji[value.sessionId] = accepted
+  }
+  await ctx.settings.update(SETTINGS_ENTRY_ID, { pinned, emoji })
 }

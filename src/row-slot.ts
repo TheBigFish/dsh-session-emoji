@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Row-slot adaptation: registers the per-row [pin][swatch] controls into the
+ * Row-slot adaptation: registers the per-row [pin][emoji] controls into the
  * upstream per-row slot (`sessions.row.action` — the D1 extension point,
  * declared by the workspace browser once it ships) when the running build
  * declares it, and stays inert on baselines without it (the DOM overlay
@@ -13,12 +13,12 @@
  * newer than the npm baseline this plugin compiles against, the registry is
  * consumed through a narrow structural face with boundary casts — runtime
  * probing, never compile-time dependence on the future key.
- * @module dsh-session-pin/row-slot
+ * @module dsh-session-emoji/row-slot
  */
 import * as React from 'react'
 import type { PinReadFace, PinTranslate } from './faces.ts'
-import { colorClassIndex } from './pin-core.ts'
-import { BADGE_CLASS, PINNED_CLASS, PIN_SVG, ROW_CONTROLS_CLASS, SWATCH_CLASS } from './pin-ui-shared.ts'
+import type { EmojiPickerFace } from './emoji-picker.ts'
+import { BADGE_CLASS, EMOJI_BUTTON_CLASS, PINNED_CLASS, PIN_SVG, ROW_CONTROLS_CLASS } from './pin-ui-shared.ts'
 
 /** Upstream row-slot key (the D1 extension point contract). */
 export const ROW_SLOT_KEY = 'sessions.row.action'
@@ -47,35 +47,45 @@ export interface RowSlotRegistryLike {
 export interface RowSlotDeps {
   slots: RowSlotRegistryLike
   pin: PinReadFace
+  picker: EmojiPickerFace
   t: PinTranslate
 }
 
-type RowBadgeProps = RowSlotOwnerProps & { pin: PinReadFace; t: PinTranslate }
+type RowBadgeProps = RowSlotOwnerProps & { pin: PinReadFace; picker: EmojiPickerFace; t: PinTranslate }
 
-/** The color swatch: current color dot, click cycles, Shift+click clears. */
-function RowSwatch(props: { color: string | undefined; pin: PinReadFace; id: string; t: PinTranslate }): React.ReactNode {
-  const { color, pin, id, t } = props
-  const index = colorClassIndex(color)
-  const label = t('colorChange')
+/** The emoji button: current glyph (or empty-circle placeholder), click opens
+ * the shared picker, Shift+click clears. */
+function RowEmoji(props: { emoji: string | undefined; pin: PinReadFace; picker: EmojiPickerFace; id: string; t: PinTranslate }): React.ReactNode {
+  const { emoji, pin, picker, id, t } = props
+  const label = t('emojiPick')
+  const ref = React.useRef<HTMLButtonElement | null>(null)
   return React.createElement('button', {
     type: 'button',
-    className: SWATCH_CLASS,
+    ref,
+    className: EMOJI_BUTTON_CLASS,
     title: label,
     'aria-label': label,
-    ...(index === undefined ? {} : { 'data-color': `c${index}` }),
+    ...(emoji === undefined ? {} : { 'data-emoji': emoji }),
     onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation()
-      if (event.shiftKey) void pin.clearColor(id)
-      else void pin.cycleColor(id)
+      if (event.shiftKey) {
+        void pin.clearEmoji(id)
+        return
+      }
+      const anchor = ref.current
+      if (anchor === null) return
+      picker.open(anchor, emoji, (chosen) => {
+        void (chosen === null ? pin.clearEmoji(id) : pin.setEmoji(id, chosen))
+      })
     },
-  })
+  }, emoji === undefined ? null : emoji)
 }
 
-/** Per-row [pin][swatch] controls rendered inside the upstream row slot. */
+/** Per-row [pin][emoji] controls rendered inside the upstream row slot. */
 function RowBadge(props: RowBadgeProps): React.ReactNode {
   const { sessionId, pin, t } = props
   const isPinned = React.useSyncExternalStore(pin.subscribe, () => pin.isPinned(sessionId))
-  const color = React.useSyncExternalStore(pin.subscribe, () => pin.getColor(sessionId))
+  const emoji = React.useSyncExternalStore(pin.subscribe, () => pin.getEmoji(sessionId))
   const label = isPinned ? t('unpin') : t('pin')
   return React.createElement('span', { className: ROW_CONTROLS_CLASS },
     React.createElement('button', {
@@ -89,7 +99,7 @@ function RowBadge(props: RowBadgeProps): React.ReactNode {
         void pin.toggle(sessionId)
       },
     }, React.createElement('span', { dangerouslySetInnerHTML: { __html: PIN_SVG } })),
-    React.createElement(RowSwatch, { color, pin, id: sessionId, t }),
+    React.createElement(RowEmoji, { emoji, pin, picker: props.picker, id: sessionId, t }),
   )
 }
 
@@ -106,16 +116,16 @@ export function rowSlotDeclared(slots: RowSlotRegistryLike): boolean {
  * session row (the render site may wrap it) and retires its own, so a row
  * never shows two pin sets — and once the slot declares, the overlay stops
  * painting session rows entirely (see the slot-active gate in the glue).
- * @param deps - slot registry + pin/t faces.
+ * @param deps - slot registry + pin/picker/t faces.
  * @returns the disposer.
  */
 export function mountRowSlot(deps: RowSlotDeps): () => void {
   return deps.slots.inject(ROW_SLOT_KEY, () => deps.slots.register(
     {
       name: ROW_SLOT_KEY,
-      id: 'dsh-session-pin',
+      id: 'dsh-session-emoji',
       order: 50,
-      inject: () => ({ pin: deps.pin, t: deps.t }),
+      inject: () => ({ pin: deps.pin, picker: deps.picker, t: deps.t }),
     },
     ((props: never) => RowBadge(props as unknown as RowBadgeProps)) as (props: never) => React.ReactNode,
   ))

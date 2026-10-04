@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest'
 import {
-  colorClassIndex, decodeStoredPins, emptyStoredPins, encodeStoredPins, hexToRgba, isPaletteColor,
-  nextPaletteColor, normalizeColors, normalizePins, PIN_COLOR_PALETTE, pruneColors, prunePins,
-  reorderMoves, togglePin, topAnchor,
+  decodeStoredPins, emptyStoredPins, encodeStoredPins, isEmojiChar, MAX_RECENT_EMOJI,
+  normalizeEmoji, normalizeEmojiMap, normalizePins, normalizeRecentEmoji, pruneEmoji, prunePins,
+  rememberEmoji, reorderMoves, togglePin, topAnchor,
 } from '../src/pin-core.ts'
+import { EMOJI_BY_CHAR } from '../src/emoji-catalog.ts'
+
+/** Two shipped catalog emoji used across the tests. */
+const SMILE = '😀'
+const ROCKET = '🚀'
 
 describe('normalizePins', () => {
   it('accepts a plain string array unchanged', () => {
@@ -60,41 +65,52 @@ describe('topAnchor', () => {
   })
 })
 
-describe('color palette helpers', () => {
-  it('accepts exactly the preset palette hexes', () => {
-    for (const color of PIN_COLOR_PALETTE) expect(isPaletteColor(color)).toBe(true)
-    expect(isPaletteColor('#123456')).toBe(false)
-    expect(isPaletteColor(undefined)).toBe(false)
-    expect(isPaletteColor(7)).toBe(false)
+describe('emoji catalog helpers', () => {
+  it('ships the sample emoji the tests rely on', () => {
+    expect(EMOJI_BY_CHAR.has(SMILE)).toBe(true)
+    expect(EMOJI_BY_CHAR.has(ROCKET)).toBe(true)
   })
 
-  it('normalizes color maps to palette values only', () => {
-    expect(normalizeColors({ a: PIN_COLOR_PALETTE[0], b: '#badbad', c: 1, '': PIN_COLOR_PALETTE[1] })).toEqual({
-      a: PIN_COLOR_PALETTE[0],
-    })
-    expect(normalizeColors('nope')).toEqual({})
-    expect(normalizeColors(['x'])).toEqual({})
-    expect(normalizeColors(null)).toEqual({})
+  it('accepts exactly the shipped catalog chars', () => {
+    expect(isEmojiChar(SMILE)).toBe(true)
+    expect(isEmojiChar(ROCKET)).toBe(true)
+    // Flags and skin-tone variants are deliberately outside the catalog.
+    expect(isEmojiChar('🇺🇸')).toBe(false)
+    expect(isEmojiChar('👋🏻')).toBe(false)
+    expect(isEmojiChar('#f97316')).toBe(false)
+    expect(isEmojiChar(undefined)).toBe(false)
+    expect(isEmojiChar(7)).toBe(false)
+    expect(isEmojiChar('')).toBe(false)
   })
 
-  it('maps stored colors to palette indices for the class hook', () => {
-    expect(colorClassIndex(PIN_COLOR_PALETTE[3])).toBe(3)
-    expect(colorClassIndex('#123456')).toBeUndefined()
-    expect(colorClassIndex(undefined)).toBeUndefined()
-    expect(colorClassIndex(null)).toBeUndefined()
+  it('normalizes single emoji values against the catalog', () => {
+    expect(normalizeEmoji(SMILE)).toBe(SMILE)
+    expect(normalizeEmoji('not-an-emoji')).toBeUndefined()
+    expect(normalizeEmoji(null)).toBeUndefined()
   })
 
-  it('cycles none → palette[0] → … → none', () => {
-    expect(nextPaletteColor(undefined)).toBe(PIN_COLOR_PALETTE[0])
-    expect(nextPaletteColor(null)).toBe(PIN_COLOR_PALETTE[0])
-    expect(nextPaletteColor('#bogus')).toBe(PIN_COLOR_PALETTE[0])
-    expect(nextPaletteColor(PIN_COLOR_PALETTE[0])).toBe(PIN_COLOR_PALETTE[1])
-    expect(nextPaletteColor(PIN_COLOR_PALETTE[PIN_COLOR_PALETTE.length - 1])).toBeNull()
+  it('normalizes emoji maps to catalog values only', () => {
+    expect(normalizeEmojiMap({ a: SMILE, b: '#badbad', c: 1, '': ROCKET })).toEqual({ a: SMILE })
+    expect(normalizeEmojiMap('nope')).toEqual({})
+    expect(normalizeEmojiMap(['x'])).toEqual({})
+    expect(normalizeEmojiMap(null)).toEqual({})
   })
 
-  it('converts hex literals to rgba()', () => {
-    expect(hexToRgba('#f97316', 0.1)).toBe('rgba(249,115,22,0.1)')
-    expect(hexToRgba('garbage', 0.1)).toBe('transparent')
+  it('normalizes recents: catalog chars, deduped, capped', () => {
+    expect(normalizeRecentEmoji([SMILE, ROCKET, SMILE, 'nope', 7])).toEqual([SMILE, ROCKET])
+    expect(normalizeRecentEmoji('nope')).toEqual([])
+    const long = Array.from({ length: MAX_RECENT_EMOJI + 4 }, (_, index) => [...EMOJI_BY_CHAR.keys()][index]!)
+    expect(normalizeRecentEmoji(long)).toHaveLength(MAX_RECENT_EMOJI)
+  })
+
+  it('remembers one pick by moving it to the front and capping the list', () => {
+    expect(rememberEmoji([SMILE, ROCKET], ROCKET)).toEqual([ROCKET, SMILE])
+    expect(rememberEmoji([SMILE], SMILE)).toEqual([SMILE])
+    expect(rememberEmoji([SMILE], 'nope')).toEqual([SMILE])
+    const long = Array.from({ length: MAX_RECENT_EMOJI }, (_, index) => [...EMOJI_BY_CHAR.keys()][index]!)
+    const next = rememberEmoji(long, ROCKET)
+    expect(next).toHaveLength(MAX_RECENT_EMOJI)
+    expect(next[0]).toBe(ROCKET)
   })
 })
 
@@ -102,14 +118,15 @@ describe('stored-pin envelope', () => {
   const fullDoc = {
     pinned: ['b', 'a'],
     workspacePinned: ['w2', 'w1'],
-    colors: { a: PIN_COLOR_PALETTE[0] },
-    workspaceColors: { w1: PIN_COLOR_PALETTE[2] },
+    emoji: { a: SMILE },
+    workspaceEmoji: { w1: ROCKET },
+    recentEmoji: [ROCKET, SMILE],
     boards: { byId: { work: { name: 'Work', order: 0 } }, membership: { a: 'work' } },
     tags: { a: ['release', 'research'] },
     views: [{ id: 'v1', name: 'work view', text: '', tags: [], board: 'work' }],
   }
 
-  it('round-trips through the v3 envelope', () => {
+  it('round-trips through the v4 envelope', () => {
     expect(decodeStoredPins(JSON.parse(encodeStoredPins(fullDoc)))).toEqual(fullDoc)
   })
 
@@ -121,19 +138,36 @@ describe('stored-pin envelope', () => {
     expect(decodeStoredPins({ v: 1, pinned: ['a', 'b', 'a', 7] })).toEqual({ ...emptyStoredPins(), pinned: ['a', 'b'] })
   })
 
-  it('normalizes every v2 payload field and migrates to v3 defaults', () => {
+  it('migrates v2 payloads and drops the retired color maps', () => {
     expect(decodeStoredPins({
       v: 2,
       pinned: ['a', 'a'],
       workspacePinned: [1, 'w'],
-      colors: { a: PIN_COLOR_PALETTE[1], x: 'nope' },
-      workspaceColors: 'broken',
+      colors: { a: '#f97316' },
+      workspaceColors: { w: '#22c55e' },
     })).toEqual({
       ...emptyStoredPins(),
       pinned: ['a'],
       workspacePinned: ['w'],
-      colors: { a: PIN_COLOR_PALETTE[1] },
-      workspaceColors: {},
+    })
+  })
+
+  it('migrates v3 payloads (navigator data kept, colors dropped)', () => {
+    expect(decodeStoredPins({
+      v: 3,
+      pinned: ['a'],
+      workspacePinned: ['w'],
+      colors: { a: '#f97316' },
+      boards: { byId: { work: { name: 'Work', order: 0 } }, membership: { a: 'work' } },
+      tags: { a: ['x'] },
+      views: [{ id: 'v1', name: 'view', text: '', tags: [], board: 'work' }],
+    })).toEqual({
+      ...emptyStoredPins(),
+      pinned: ['a'],
+      workspacePinned: ['w'],
+      boards: { byId: { work: { name: 'Work', order: 0 } }, membership: { a: 'work' } },
+      tags: { a: ['x'] },
+      views: [{ id: 'v1', name: 'view', text: '', tags: [], board: 'work' }],
     })
   })
 
@@ -155,15 +189,13 @@ describe('prunePins', () => {
   })
 })
 
-describe('pruneColors', () => {
-  it('drops color entries for ids absent from the live set', () => {
-    expect(pruneColors({ a: PIN_COLOR_PALETTE[0], ghost: PIN_COLOR_PALETTE[1] }, new Set(['a']))).toEqual({
-      a: PIN_COLOR_PALETTE[0],
-    })
+describe('pruneEmoji', () => {
+  it('drops emoji entries for ids absent from the live set', () => {
+    expect(pruneEmoji({ a: SMILE, ghost: ROCKET }, new Set(['a']))).toEqual({ a: SMILE })
   })
 
   it('returns an empty map when nothing matches', () => {
-    expect(pruneColors({ x: PIN_COLOR_PALETTE[0] }, new Set())).toEqual({})
+    expect(pruneEmoji({ x: SMILE }, new Set())).toEqual({})
   })
 })
 

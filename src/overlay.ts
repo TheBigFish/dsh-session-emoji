@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Row-overlay renderer: the DOM fallback that paints the [pin][swatch]
+ * Row-overlay renderer: the DOM fallback that paints the [pin][emoji]
  * controls onto the core rows. Two row kinds:
  *
  * - session rows (`[role="treeitem"][aria-selected]`) — covered only on
@@ -19,11 +19,11 @@
  * stale or duplicate controls. A slot-registry subscription re-renders on
  * slot declaration so the session-row gate reacts without waiting for a DOM
  * mutation.
- * @module dsh-session-pin/overlay
+ * @module dsh-session-emoji/overlay
  */
 import type { PinReadFace, PinTranslate, SessionListFace, WorkspaceListFace } from './faces.ts'
-import { colorClassIndex } from './pin-core.ts'
-import { BADGE_CLASS, PINNED_CLASS, PIN_SVG, ROW_CONTROLS_CLASS, SWATCH_CLASS } from './pin-ui-shared.ts'
+import type { EmojiPickerFace } from './emoji-picker.ts'
+import { BADGE_CLASS, EMOJI_BUTTON_CLASS, PINNED_CLASS, PIN_SVG, ROW_CONTROLS_CLASS } from './pin-ui-shared.ts'
 
 /** Documents the overlay mutates (narrow Document face for jsdom tests). */
 export interface OverlayDoc {
@@ -45,6 +45,8 @@ export interface OverlayDeps {
   workspaces: WorkspaceListFace
   pin: PinReadFace
   t: PinTranslate
+  /** The shared emoji picker (one popover for both render paths). */
+  picker: EmojiPickerFace
   warn: (message: string) => void
   doc: OverlayDoc
   /** Whether the upstream `sessions.row.action` slot is declared (turns the session-row path off). */
@@ -59,10 +61,10 @@ export interface OverlayDeps {
 const LIMIT_FLASH_MS = 1800
 
 /**
- * Mount the row overlay: [pin][swatch] rendering for workspace rows (always)
+ * Mount the row overlay: [pin][emoji] rendering for workspace rows (always)
  * and session rows (only while the row slot is undeclared), click handling,
  * limit feedback, and the body-scoped mutation observer.
- * @param deps - sessions/workspaces/pin/translate/document faces.
+ * @param deps - sessions/workspaces/pin/picker/translate/document faces.
  * @returns the disposer removing every control and subscription.
  */
 export function mountOverlay(deps: OverlayDeps): () => void {
@@ -118,26 +120,26 @@ export function mountOverlay(deps: OverlayDeps): () => void {
     return false
   }
 
-  /** Create the shared [pin][swatch] pair for one row.
+  /** Create the shared [pin][emoji] pair for one row.
    * @param row - the addressed treeitem.
    * @param kind - the row kind the handlers act on (session vs workspace), so
    * a session row whose title collides with a workspace label can never
    * toggle a workspace pin (and vice versa).
    */
-  const createControls = (row: HTMLElement, kind: 'session' | 'workspace'): { badge: HTMLButtonElement; swatch: HTMLButtonElement } => {
+  const createControls = (row: HTMLElement, kind: 'session' | 'workspace'): { badge: HTMLButtonElement; emoji: HTMLButtonElement } => {
     const badge = doc.createElement('button') as HTMLButtonElement
     badge.type = 'button'
     badge.className = BADGE_CLASS
     badge.dataset.overlayOwned = OVERLAY_OWNED
     badge.innerHTML = PIN_SVG
-    const swatch = doc.createElement('button') as HTMLButtonElement
-    swatch.type = 'button'
-    swatch.className = SWATCH_CLASS
-    swatch.dataset.overlayOwned = OVERLAY_OWNED
+    const emoji = doc.createElement('button') as HTMLButtonElement
+    emoji.type = 'button'
+    emoji.className = EMOJI_BUTTON_CLASS
+    emoji.dataset.overlayOwned = OVERLAY_OWNED
     const wrapper = doc.createElement('span') as HTMLSpanElement
     wrapper.className = ROW_CONTROLS_CLASS
     wrapper.dataset.overlayOwned = OVERLAY_OWNED
-    wrapper.append(badge, swatch)
+    wrapper.append(badge, emoji)
     row.insertBefore(wrapper, row.firstChild)
 
     const flash = (key: string, limitLabel: string, onRejected: (label: string) => void): void => {
@@ -159,7 +161,7 @@ export function mountOverlay(deps: OverlayDeps): () => void {
         const key = `s:${target}`
         void pin.toggle(target).then((result) => {
           if (result !== 'limit') return
-          deps.warn(`session-pin: pin limit (${String(pin.getMaxPins())}) reached; unpin another session first`)
+          deps.warn(`session-emoji: pin limit (${String(pin.getMaxPins())}) reached; unpin another session first`)
           flash(key, t('limit'), label => { badge.title = label; badge.setAttribute('aria-label', label) })
         })
         return
@@ -170,30 +172,34 @@ export function mountOverlay(deps: OverlayDeps): () => void {
         const key = `w:${workspace}`
         void pin.toggleWorkspace(workspace).then((result) => {
           if (result !== 'limit') return
-          deps.warn(`session-pin: workspace pin limit (${String(pin.getMaxPins())}) reached; unpin another workspace first`)
+          deps.warn(`session-emoji: workspace pin limit (${String(pin.getMaxPins())}) reached; unpin another workspace first`)
           flash(key, t('limitWorkspace'), label => { badge.title = label; badge.setAttribute('aria-label', label) })
         })
       }
     })
 
-    swatch.addEventListener('click', (event) => {
+    emoji.addEventListener('click', (event) => {
       event.stopPropagation()
       if (kind === 'session' && !deps.sessionSlotActive()) {
         const target = sessionIdsFor(row)?.ids[0]
         if (target === undefined) return
-        if (event.shiftKey) void pin.clearColor(target)
-        else void pin.cycleColor(target)
+        if (event.shiftKey) void pin.clearEmoji(target)
+        else deps.picker.open(emoji, pin.getEmoji(target), (chosen) => {
+          void (chosen === null ? pin.clearEmoji(target) : pin.setEmoji(target, chosen))
+        })
         return
       }
       if (kind === 'workspace') {
         const workspace = workspaceIdFor(row)
         if (workspace === undefined) return
-        if (event.shiftKey) void pin.clearWorkspaceColor(workspace)
-        else void pin.cycleWorkspaceColor(workspace)
+        if (event.shiftKey) void pin.clearWorkspaceEmoji(workspace)
+        else deps.picker.open(emoji, pin.getWorkspaceEmoji(workspace), (chosen) => {
+          void (chosen === null ? pin.clearWorkspaceEmoji(workspace) : pin.setWorkspaceEmoji(workspace, chosen))
+        })
       }
     })
 
-    return { badge, swatch }
+    return { badge, emoji }
   }
 
   /** Paint (or retire) one session row's overlay controls. */
@@ -216,15 +222,14 @@ export function mountOverlay(deps: OverlayDeps): () => void {
       return
     }
     if (wrapper === null) wrapper = createControls(row, 'session').badge.parentElement as HTMLElement
-    const { badge, swatch } = readControls(wrapper)
-    if (badge === undefined || swatch === undefined) return
+    const { badge, emoji } = readControls(wrapper)
+    if (badge === undefined || emoji === undefined) return
     const ids = match.ids
     const target = ids[0]!
     const isPinned = ids.some(id => pin.isPinned(id))
     badge.classList.toggle(PINNED_CLASS, isPinned)
     badge.setAttribute('aria-pressed', String(isPinned))
-    const color = pin.getColor(target)
-    paintSwatch(swatch, color)
+    paintEmojiButton(emoji, pin.getEmoji(target))
     const flashing = flashes.has(`s:${target}`)
     if (!flashing) {
       const label = t(ids.some(id => pin.isPinned(id)) ? 'unpin' : 'pin')
@@ -242,12 +247,12 @@ export function mountOverlay(deps: OverlayDeps): () => void {
       return
     }
     if (wrapper === null) wrapper = createControls(row, 'workspace').badge.parentElement as HTMLElement
-    const { badge, swatch } = readControls(wrapper)
-    if (badge === undefined || swatch === undefined) return
+    const { badge, emoji } = readControls(wrapper)
+    if (badge === undefined || emoji === undefined) return
     const isPinned = pin.isWorkspacePinned(id)
     badge.classList.toggle(PINNED_CLASS, isPinned)
     badge.setAttribute('aria-pressed', String(isPinned))
-    paintSwatch(swatch, pin.getWorkspaceColor(id))
+    paintEmojiButton(emoji, pin.getWorkspaceEmoji(id))
     const flashing = flashes.has(`w:${id}`)
     if (!flashing) {
       const label = t(isPinned ? 'unpinWorkspace' : 'pinWorkspace')
@@ -256,18 +261,23 @@ export function mountOverlay(deps: OverlayDeps): () => void {
     }
   }
 
-  const readControls = (wrapper: HTMLElement): { badge: HTMLButtonElement | undefined; swatch: HTMLButtonElement | undefined } => ({
+  const readControls = (wrapper: HTMLElement): { badge: HTMLButtonElement | undefined; emoji: HTMLButtonElement | undefined } => ({
     badge: wrapper.querySelector<HTMLButtonElement>(`button.${BADGE_CLASS}`) ?? undefined,
-    swatch: wrapper.querySelector<HTMLButtonElement>(`button.${SWATCH_CLASS}`) ?? undefined,
+    emoji: wrapper.querySelector<HTMLButtonElement>(`button.${EMOJI_BUTTON_CLASS}`) ?? undefined,
   })
 
-  const paintSwatch = (swatch: HTMLButtonElement, color: string | undefined): void => {
-    const index = colorClassIndex(color)
-    const label = t('colorChange')
-    swatch.title = label
-    swatch.setAttribute('aria-label', label)
-    if (index === undefined) swatch.removeAttribute('data-color')
-    else swatch.setAttribute('data-color', `c${index}`)
+  /** Paint one row's emoji button: the emoji glyph, or the empty-circle placeholder. */
+  const paintEmojiButton = (button: HTMLButtonElement, emoji: string | undefined): void => {
+    const label = t('emojiPick')
+    button.title = label
+    button.setAttribute('aria-label', label)
+    if (emoji === undefined) {
+      button.textContent = ''
+      button.removeAttribute('data-emoji')
+    } else {
+      button.textContent = emoji
+      button.setAttribute('data-emoji', emoji)
+    }
   }
 
   const render = (): void => {

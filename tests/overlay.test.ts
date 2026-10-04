@@ -3,8 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountOverlay, type OverlayDeps, type OverlayDoc } from '../src/overlay.ts'
 import type { PinReadFace, PinTranslate, SessionListFace, WorkspaceListFace } from '../src/faces.ts'
-import { BADGE_CLASS, PINNED_CLASS, ROW_CONTROLS_CLASS, SWATCH_CLASS } from '../src/pin-ui-shared.ts'
-import { PIN_COLOR_PALETTE } from '../src/pin-core.ts'
+import type { EmojiPickerFace } from '../src/emoji-picker.ts'
+import { BADGE_CLASS, EMOJI_BUTTON_CLASS, PINNED_CLASS, ROW_CONTROLS_CLASS } from '../src/pin-ui-shared.ts'
+
+/** Two shipped catalog emoji used across the tests. */
+const SMILE = '😀'
+const ROCKET = '🚀'
 
 const T: PinTranslate = key => ({
   pin: 'Pin session',
@@ -13,7 +17,20 @@ const T: PinTranslate = key => ({
   pinWorkspace: 'Pin workspace',
   unpinWorkspace: 'Unpin workspace',
   limitWorkspace: 'LIMIT-WORKSPACE',
-  colorChange: 'Change row color',
+  emojiPick: 'Pick emoji',
+  emojiPickerTitle: 'Choose an emoji',
+  emojiSearch: 'Search',
+  emojiRecent: 'Recent',
+  emojiNoResults: 'None',
+  emojiMore: 'More',
+  categorySmileys: 'Smileys',
+  categoryPeople: 'People',
+  categoryAnimals: 'Animals',
+  categoryFood: 'Food',
+  categoryTravel: 'Travel',
+  categoryActivities: 'Activity',
+  categoryObjects: 'Objects',
+  categorySymbols: 'Symbols',
   panelTitle: 'Pinned sessions',
   panelEmpty: 'Nothing pinned yet',
   panelSessions: 'Sessions',
@@ -33,20 +50,20 @@ const flush = async (): Promise<void> => new Promise(resolve => setTimeout(resol
 function pinFace(initial: {
   pinned?: string[]
   workspacePinned?: string[]
-  colors?: Record<string, string>
-  workspaceColors?: Record<string, string>
+  emoji?: Record<string, string>
+  workspaceEmoji?: Record<string, string>
 } = {}, behavior: 'ok' | 'limit' = 'ok'): {
   face: PinReadFace
   calls: string[]
-  set(next: Partial<{ pinned: string[]; workspacePinned: string[]; colors: Record<string, string>; workspaceColors: Record<string, string> }>): void
+  set(next: Partial<{ pinned: string[]; workspacePinned: string[]; emoji: Record<string, string>; workspaceEmoji: Record<string, string> }>): void
 } {
   const listeners = new Set<() => void>()
   const calls: string[] = []
   let state = {
     pinned: initial.pinned ?? [],
     workspacePinned: initial.workspacePinned ?? [],
-    colors: initial.colors ?? {},
-    workspaceColors: initial.workspaceColors ?? {},
+    emoji: initial.emoji ?? {},
+    workspaceEmoji: initial.workspaceEmoji ?? {},
   }
   const notify = (): void => {
     for (const listener of [...listeners]) listener()
@@ -65,6 +82,7 @@ function pinFace(initial: {
       getWorkspacePinned: () => state.workspacePinned,
       isWorkspacePinned: id => state.workspacePinned.includes(id),
       getMaxPins: () => 2,
+      hasPendingWrites: () => false,
       toggle: async (id) => {
         calls.push(`toggle:${id}`)
         if (behavior === 'limit') return 'limit'
@@ -91,30 +109,29 @@ function pinFace(initial: {
         notify()
         return next ? 'pinned' : 'unpinned'
       },
-      getColor: id => state.colors[id],
-      getWorkspaceColor: id => state.workspaceColors[id],
-      cycleColor: async (id) => {
-        calls.push(`cycle:${id}`)
-        const index = state.colors[id] === undefined ? -1 : (PIN_COLOR_PALETTE as readonly string[]).indexOf(state.colors[id]!)
-        const next = index + 1 < PIN_COLOR_PALETTE.length ? PIN_COLOR_PALETTE[index + 1]! : undefined
-        state = { ...state, colors: next === undefined ? Object.fromEntries(Object.entries(state.colors).filter(([key]) => key !== id)) : { ...state.colors, [id]: next } }
+      getEmoji: id => state.emoji[id],
+      getWorkspaceEmoji: id => state.workspaceEmoji[id],
+      getRecentEmoji: () => [],
+      setEmoji: async (id, emoji) => {
+        calls.push(`emoji:${id}:${String(emoji)}`)
+        if (emoji === null) state = { ...state, emoji: Object.fromEntries(Object.entries(state.emoji).filter(([key]) => key !== id)) }
+        else state = { ...state, emoji: { ...state.emoji, [id]: emoji } }
         notify()
       },
-      cycleWorkspaceColor: async (id) => {
-        calls.push(`cycleWs:${id}`)
-        const index = state.workspaceColors[id] === undefined ? -1 : (PIN_COLOR_PALETTE as readonly string[]).indexOf(state.workspaceColors[id]!)
-        const next = index + 1 < PIN_COLOR_PALETTE.length ? PIN_COLOR_PALETTE[index + 1]! : undefined
-        state = { ...state, workspaceColors: next === undefined ? Object.fromEntries(Object.entries(state.workspaceColors).filter(([key]) => key !== id)) : { ...state.workspaceColors, [id]: next } }
-        notify()
-      },
-      clearColor: async (id) => {
+      clearEmoji: async (id) => {
         calls.push(`clear:${id}`)
-        state = { ...state, colors: Object.fromEntries(Object.entries(state.colors).filter(([key]) => key !== id)) }
+        state = { ...state, emoji: Object.fromEntries(Object.entries(state.emoji).filter(([key]) => key !== id)) }
         notify()
       },
-      clearWorkspaceColor: async (id) => {
+      setWorkspaceEmoji: async (id, emoji) => {
+        calls.push(`emojiWs:${id}:${String(emoji)}`)
+        if (emoji === null) state = { ...state, workspaceEmoji: Object.fromEntries(Object.entries(state.workspaceEmoji).filter(([key]) => key !== id)) }
+        else state = { ...state, workspaceEmoji: { ...state.workspaceEmoji, [id]: emoji } }
+        notify()
+      },
+      clearWorkspaceEmoji: async (id) => {
         calls.push(`clearWs:${id}`)
-        state = { ...state, workspaceColors: Object.fromEntries(Object.entries(state.workspaceColors).filter(([key]) => key !== id)) }
+        state = { ...state, workspaceEmoji: Object.fromEntries(Object.entries(state.workspaceEmoji).filter(([key]) => key !== id)) }
         notify()
       },
       getBoards: () => ({ byId: {}, membership: {} }),
@@ -126,6 +143,41 @@ function pinFace(initial: {
           listeners.delete(listener)
         }
       },
+    },
+  }
+}
+
+/** Picker double: records opens and lets the test deliver the chosen emoji. */
+function pickerDouble(): {
+  picker: EmojiPickerFace
+  opened: Array<{ anchor: HTMLElement; current: string | undefined }>
+  pick(emoji: string | null): void
+  closeCalls: number
+} {
+  const opened: Array<{ anchor: HTMLElement; current: string | undefined }> = []
+  let callback: ((emoji: string | null) => void) | undefined
+  let closeCalls = 0
+  return {
+    picker: {
+      open: (anchor, current, onPick) => {
+        opened.push({ anchor, current })
+        callback = onPick
+      },
+      close: () => {
+        closeCalls += 1
+        callback = undefined
+      },
+      isOpen: () => callback !== undefined,
+      dispose: () => {},
+    },
+    opened,
+    get closeCalls() {
+      return closeCalls
+    },
+    pick: (emoji) => {
+      const call = callback
+      callback = undefined
+      call?.(emoji)
     },
   }
 }
@@ -183,7 +235,7 @@ let disposes: Array<() => void> = []
 let slotActive: boolean
 let slotsListeners: Set<() => void>
 
-function depsFor(pin: ReturnType<typeof pinFace>, warn: ReturnType<typeof vi.fn> = vi.fn()): OverlayDeps {
+function depsFor(pin: ReturnType<typeof pinFace>, warn: ReturnType<typeof vi.fn> = vi.fn(), picker: EmojiPickerFace = pickerDouble().picker): OverlayDeps {
   return {
     sessions: sessionsFace([
       { id: 'a', displayTitle: 'Alpha' },
@@ -194,6 +246,7 @@ function depsFor(pin: ReturnType<typeof pinFace>, warn: ReturnType<typeof vi.fn>
       { workspaceId: 'w2', title: 'Archive' },
     ]),
     pin: pin.face,
+    picker,
     t: T,
     warn,
     doc: document as unknown as OverlayDoc,
@@ -225,7 +278,7 @@ afterEach(() => {
 })
 
 describe('mountOverlay — session rows (slot inactive)', () => {
-  it('paints one [pin][swatch] set per titled row and none on rows without a match', async () => {
+  it('paints one [pin][emoji] set per titled row and none on rows without a match', async () => {
     const pin = pinFace()
     disposes.push(mountOverlay(depsFor(pin)))
     await flush()
@@ -234,8 +287,10 @@ describe('mountOverlay — session rows (slot inactive)', () => {
     // Three session rows, two distinct titles: every matching row gets controls.
     for (const row of sessionRows) {
       expect(row.querySelectorAll(`span.${ROW_CONTROLS_CLASS} button.${BADGE_CLASS}`)).toHaveLength(1)
-      expect(row.querySelectorAll(`span.${ROW_CONTROLS_CLASS} button.${SWATCH_CLASS}`)).toHaveLength(1)
+      expect(row.querySelectorAll(`span.${ROW_CONTROLS_CLASS} button.${EMOJI_BUTTON_CLASS}`)).toHaveLength(1)
       expect(row.querySelectorAll(`button.${BADGE_CLASS}`)).toHaveLength(1)
+      // Undecorated rows keep the empty-circle placeholder (no data-emoji).
+      expect(row.querySelector(`button.${EMOJI_BUTTON_CLASS}`)?.hasAttribute('data-emoji')).toBe(false)
     }
   })
 
@@ -281,23 +336,35 @@ describe('mountOverlay — session rows (slot inactive)', () => {
     expect(badge.title).toBe('Pin session')
   })
 
-  it('cycles the row color from the swatch and clears on Shift+click', async () => {
+  it('opens the picker with the current emoji and applies the pick, clears on Shift+click', async () => {
     const pin = pinFace()
-    disposes.push(mountOverlay(depsFor(pin)))
+    const picker = pickerDouble()
+    disposes.push(mountOverlay(depsFor(pin, vi.fn(), picker.picker)))
     await flush()
     const sessionRow = rows().find(row => row.hasAttribute('aria-selected'))!
-    const swatch = sessionRow.querySelector(`button.${SWATCH_CLASS}`) as HTMLButtonElement
-    expect(swatch.hasAttribute('data-color')).toBe(false)
-    swatch.click()
+    const emoji = sessionRow.querySelector(`button.${EMOJI_BUTTON_CLASS}`) as HTMLButtonElement
+    emoji.click()
+    expect(picker.opened).toHaveLength(1)
+    expect(picker.opened[0]?.current).toBeUndefined()
+    expect(picker.opened[0]?.anchor).toBe(emoji)
+    picker.pick(SMILE)
     await flush()
-    expect(pin.calls).toEqual(['cycle:a'])
-    pin.set({ colors: { a: PIN_COLOR_PALETTE[0] } })
+    expect(pin.calls).toEqual([`emoji:a:${SMILE}`])
+    // The button repaints from state and keeps the glyph visible.
+    expect(emoji.textContent).toBe(SMILE)
+    expect(emoji.getAttribute('data-emoji')).toBe(SMILE)
+    // Re-opening passes the current emoji; picking null clears.
+    emoji.click()
+    expect(picker.opened[1]?.current).toBe(SMILE)
+    picker.pick(null)
     await flush()
-    expect(sessionRow.querySelector(`button.${SWATCH_CLASS}`)?.getAttribute('data-color')).toBe('c0')
+    expect(pin.calls).toEqual([`emoji:a:${SMILE}`, 'clear:a'])
+    // Shift+click clears without opening the picker again.
     const event = new MouseEvent('click', { shiftKey: true, bubbles: true })
-    swatch.dispatchEvent(event)
+    emoji.dispatchEvent(event)
     await flush()
-    expect(pin.calls).toEqual(['cycle:a', 'clear:a'])
+    expect(pin.calls).toEqual([`emoji:a:${SMILE}`, 'clear:a', 'clear:a'])
+    expect(picker.opened).toHaveLength(2)
   })
 
   it('leaves a foreign (row-slot) badge untouched and removes only its own on dispose', async () => {
@@ -378,7 +445,7 @@ describe('mountOverlay — slot-active gate (the duplicate-pin fix)', () => {
 })
 
 describe('mountOverlay — workspace rows', () => {
-  it('paints [pin][swatch] on workspace header rows matched by label', async () => {
+  it('paints [pin][emoji] on workspace header rows matched by label', async () => {
     const pin = pinFace()
     disposes.push(mountOverlay(depsFor(pin)))
     await flush()
@@ -386,7 +453,7 @@ describe('mountOverlay — workspace rows', () => {
     expect(workspaceRows).toHaveLength(2)
     for (const row of workspaceRows) {
       expect(row.querySelectorAll(`button.${BADGE_CLASS}`)).toHaveLength(1)
-      expect(row.querySelectorAll(`button.${SWATCH_CLASS}`)).toHaveLength(1)
+      expect(row.querySelectorAll(`button.${EMOJI_BUTTON_CLASS}`)).toHaveLength(1)
     }
   })
 
@@ -402,22 +469,25 @@ describe('mountOverlay — workspace rows', () => {
     expect(pin.calls).toEqual(['toggleWs:w1'])
   })
 
-  it('cycles the workspace color and clears on Shift+click', async () => {
+  it('opens the picker for workspace rows, applies the pick, and clears on Shift+click', async () => {
     const pin = pinFace()
-    disposes.push(mountOverlay(depsFor(pin)))
+    const picker = pickerDouble()
+    disposes.push(mountOverlay(depsFor(pin, vi.fn(), picker.picker)))
     await flush()
     const workbench = rows().find(row => row.textContent === 'Workbench')!
-    const swatch = workbench.querySelector(`button.${SWATCH_CLASS}`) as HTMLButtonElement
-    swatch.click()
+    const emoji = workbench.querySelector(`button.${EMOJI_BUTTON_CLASS}`) as HTMLButtonElement
+    emoji.click()
+    expect(picker.opened).toHaveLength(1)
+    expect(picker.opened[0]?.anchor).toBe(emoji)
+    picker.pick(ROCKET)
     await flush()
-    expect(pin.calls).toEqual(['cycleWs:w1'])
-    pin.set({ workspaceColors: { w1: PIN_COLOR_PALETTE[1] } })
-    await flush()
-    expect(workbench.querySelector(`button.${SWATCH_CLASS}`)?.getAttribute('data-color')).toBe('c1')
+    expect(pin.calls).toEqual([`emojiWs:w1:${ROCKET}`])
+    expect(emoji.textContent).toBe(ROCKET)
+    expect(emoji.getAttribute('data-emoji')).toBe(ROCKET)
     const event = new MouseEvent('click', { shiftKey: true, bubbles: true })
-    swatch.dispatchEvent(event)
+    emoji.dispatchEvent(event)
     await flush()
-    expect(pin.calls).toEqual(['cycleWs:w1', 'clearWs:w1'])
+    expect(pin.calls).toEqual([`emojiWs:w1:${ROCKET}`, 'clearWs:w1'])
   })
 
   it('leaves workspace rows without a label match alone', async () => {

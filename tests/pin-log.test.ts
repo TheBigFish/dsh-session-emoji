@@ -16,8 +16,8 @@ import {
 } from '../src/pin-log.ts'
 
 /** One foldable pin value (the plugin's own full payload). */
-function value(sessionId: string, pinned: boolean, at: number, color?: string | null): PinLogValue {
-  return { sessionId, pinned, at, ...(color === undefined ? {} : { color }) }
+function value(sessionId: string, pinned: boolean, at: number, emoji?: string | null): PinLogValue {
+  return { sessionId, pinned, at, ...(emoji === undefined ? {} : { emoji }) }
 }
 
 describe('pin-log fold', () => {
@@ -32,15 +32,15 @@ describe('pin-log fold', () => {
     expect(state.pinned).toEqual(['b'])
   })
 
-  it('tracks colors independently of membership (pin never clears color)', () => {
+  it('tracks emoji independently of membership (pin never clears emoji)', () => {
     let state = emptyPinProjection()
-    state = foldPinValue(state, value('a', true, 1, '#f97316'))
-    expect(state.colors).toEqual({ a: '#f97316' })
+    state = foldPinValue(state, value('a', true, 1, '😀'))
+    expect(state.emoji).toEqual({ a: '😀' })
     state = foldPinValue(state, value('a', false, 2))
     expect(state.pinned).toEqual([])
-    expect(state.colors).toEqual({ a: '#f97316' })
+    expect(state.emoji).toEqual({ a: '😀' })
     state = foldPinValue(state, value('a', true, 3, null))
-    expect(state.colors).toEqual({})
+    expect(state.emoji).toEqual({})
   })
 
   it('foldPinEvent ignores non-pin events (same reference) and malformed payloads', () => {
@@ -53,18 +53,23 @@ describe('pin-log fold', () => {
   it('foldPinEvents rebuilds the canonical pin set from a raw log', () => {
     const events = [
       { type: 'user/message', data: null },
-      { type: PIN_EVENT, data: value('a', true, 1, '#0ea5e9') },
+      { type: PIN_EVENT, data: value('a', true, 1, '🚀') },
       { type: PIN_EVENT, data: value('b', true, 2) },
       { type: PIN_EVENT, data: value('a', false, 3) },
     ]
-    expect(foldPinEvents(events)).toEqual({ pinned: ['b'], colors: { a: '#0ea5e9' } })
+    expect(foldPinEvents(events)).toEqual({ pinned: ['b'], emoji: { a: '🚀' } })
   })
 })
 
 describe('pin-log event normalization', () => {
   it('accepts the plugin-format payload with sessionId', () => {
-    expect(normalizePinEventValue('ignored', { sessionId: 's1', pinned: true, at: 5, color: '#22c55e' }))
-      .toEqual({ sessionId: 's1', pinned: true, at: 5, color: '#22c55e' })
+    expect(normalizePinEventValue('ignored', { sessionId: 's1', pinned: true, at: 5, emoji: '✅' }))
+      .toEqual({ sessionId: 's1', pinned: true, at: 5, emoji: '✅' })
+  })
+
+  it('drops the retired color field instead of folding it', () => {
+    expect(normalizePinEventValue('s1', { sessionId: 's1', pinned: true, at: 5, color: '#f97316' }))
+      .toEqual({ sessionId: 's1', pinned: true, at: 5 })
   })
 
   it('supplies the carrier session id for the upstream { pinned, at } payload', () => {

@@ -14,18 +14,20 @@
  * signal (behavior criterion, not function text).
  *
  * Seam alignment: the `session/pin` event key and the `{ pinned, at }`
- * whole-value shape match the upstream `@deepseek-ai/dsh-session-pin` package
+ * whole-value shape match the upstream `@deepseek-ai/dsh-session-emoji` package
  * (which appends the event with `ignorable: true` and folds the `pin`
- * projection). The plugin extends that shape with the per-pin row color and
+ * projection). The plugin extends that shape with the per-pin row emoji and
  * the owning workspace it needs; {@link normalizePinEventValue} accepts both
  * the upstream payload (session id supplied by the `session/event` carrier)
  * and the plugin's own full payload, so one fold reads either producer. On
  * builds that mount the upstream service, the upstream `pin` projection is the
  * canonical read; on builds without it, {@link foldPinEvents} reconstructs the
  * same state from the raw log and {@link PinLogAppender} self-builds the
- * events behind the pre-flight host gate.
+ * events behind the pre-flight host gate. The retired `color` field is
+ * ignored on purpose: the emoji feature replaced it, and old logs migrate by
+ * discarding those values.
  *
- * @module dsh-session-pin/pin-log
+ * @module dsh-session-emoji/pin-log
  */
 
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
@@ -41,8 +43,8 @@ export interface PinLogValue {
   readonly pinned: boolean
   /** Epoch-millis recency key ordering pins across sessions (carried for upstream seam alignment). */
   readonly at: number
-  /** Post-change row color: a palette hex, `null` clears, `undefined` leaves the fold's color untouched. */
-  readonly color?: string | null
+  /** Post-change row emoji: a shipped catalog char, `null` clears, `undefined` leaves the fold's emoji untouched. */
+  readonly emoji?: string | null
   /** Owning workspace id at commit time (provenance for grouped ordering). */
   readonly workspace?: string
 }
@@ -61,22 +63,22 @@ export interface SessionEventLike {
   readonly ignorable?: boolean
 }
 
-/** Canonical pin projection: the folded pinned session ids plus per-session colors. */
+/** Canonical pin projection: the folded pinned session ids plus per-session emoji. */
 export interface PinProjection {
   /** Ordered pinned session ids, newest pin first. */
   readonly pinned: string[]
-  /** Session id → palette color. */
-  readonly colors: Record<string, string>
+  /** Session id → shipped emoji char. */
+  readonly emoji: Record<string, string>
 }
 
 /** Empty projection baseline. */
 export function emptyPinProjection(): PinProjection {
-  return { pinned: [], colors: {} }
+  return { pinned: [], emoji: {} }
 }
 
 /**
  * Whether a candidate payload is a complete plugin-format `PinLogValue`
- * (session id, boolean membership, and a finite recency key; color/workspace
+ * (session id, boolean membership, and a finite recency key; emoji/workspace
  * optional). Upstream payloads that omit `sessionId` do NOT pass this guard —
  * normalize them first with {@link normalizePinEventValue}.
  * @param value - candidate event payload.
@@ -88,7 +90,7 @@ export function isPinLogValue(value: unknown): value is PinLogValue {
   if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length === 0) return false
   if (typeof candidate.pinned !== 'boolean') return false
   if (typeof candidate.at !== 'number' || !Number.isFinite(candidate.at)) return false
-  if (candidate.color !== undefined && candidate.color !== null && typeof candidate.color !== 'string') return false
+  if (candidate.emoji !== undefined && candidate.emoji !== null && typeof candidate.emoji !== 'string') return false
   if (candidate.workspace !== undefined && (typeof candidate.workspace !== 'string' || candidate.workspace.length === 0)) return false
   return true
 }
@@ -108,13 +110,13 @@ export function normalizePinEventValue(sessionId: string, data: unknown): PinLog
   const id = typeof candidate.sessionId === 'string' && candidate.sessionId.length > 0 ? candidate.sessionId : sessionId
   if (id.length === 0) return undefined
   const at = typeof candidate.at === 'number' && Number.isFinite(candidate.at) ? candidate.at : 0
-  const color = candidate.color === null || typeof candidate.color === 'string' ? candidate.color : undefined
+  const emoji = candidate.emoji === null || typeof candidate.emoji === 'string' ? candidate.emoji : undefined
   const workspace = typeof candidate.workspace === 'string' && candidate.workspace.length > 0 ? candidate.workspace : undefined
   return {
     sessionId: id,
     pinned: candidate.pinned,
     at,
-    ...(color === undefined ? {} : { color }),
+    ...(emoji === undefined ? {} : { emoji }),
     ...(workspace === undefined ? {} : { workspace }),
   }
 }
@@ -122,9 +124,9 @@ export function normalizePinEventValue(sessionId: string, data: unknown): PinLog
 /**
  * Apply one validated pin value to the projection: pinning moves the session
  * to the front (newest pin first, matching the store's `[id, ...pinned]`
- * order) and unpinning removes it; a defined color sets the row color and a
- * null color clears it (an undefined color leaves it untouched, so pin toggles
- * never erase colors and color cycles never disturb membership).
+ * order) and unpinning removes it; a defined emoji sets the row emoji and a
+ * null emoji clears it (an undefined emoji leaves it untouched, so pin toggles
+ * never erase emoji and emoji picks never disturb membership).
  * @param state - projection covering all prior events.
  * @param value - the next committed whole-value pin state.
  * @returns the next projection.
@@ -132,10 +134,10 @@ export function normalizePinEventValue(sessionId: string, data: unknown): PinLog
 export function foldPinValue(state: PinProjection, value: PinLogValue): PinProjection {
   const rest = state.pinned.filter(id => id !== value.sessionId)
   const pinned = value.pinned ? [value.sessionId, ...rest] : rest
-  const colors = { ...state.colors }
-  if (value.color === null) delete colors[value.sessionId]
-  else if (value.color !== undefined) colors[value.sessionId] = value.color
-  return { pinned, colors }
+  const emoji = { ...state.emoji }
+  if (value.emoji === null) delete emoji[value.sessionId]
+  else if (value.emoji !== undefined) emoji[value.sessionId] = value.emoji
+  return { pinned, emoji }
 }
 
 /**

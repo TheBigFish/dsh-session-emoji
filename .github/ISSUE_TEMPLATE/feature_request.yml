@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose an enhancement for dsh-session-pin
+description: Propose an enhancement for dsh-session-emoji
 title: '[Feature]: '
 labels: [enhancement]
 body:
@@ -7,8 +7,8 @@ body:
     attributes:
       value: >
         Thanks for the idea! Before submitting, please search the
-        [existing issues](https://github.com/PerryLink/dsh-session-pin/issues)
-        and [discussions](https://github.com/PerryLink/dsh-session-pin/discussions)
+        [existing issues](https://github.com/PerryLink/dsh-session-emoji/issues)
+        and [discussions](https://github.com/PerryLink/dsh-session-emoji/discussions)
         to avoid duplicates.
   - type: textarea
     id: problem

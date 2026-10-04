@@ -5,3 +5,10 @@ verify-live/
 .playwright-mcp/
 coverage/
 *.tgz
+.pnpm-store/
+.cache/
+.xdg-cache/
+.xdg-data/
+.xdg-state/
+.xdg-config/
+.npm-cache/

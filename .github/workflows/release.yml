@@ -41,8 +41,8 @@ jobs:
       - name: Publish to npm
         run: |
           version="$(node -p "require('./package.json').version")"
-          if npm view "dsh-session-pin@${version}" version >/dev/null 2>&1; then
-            echo "dsh-session-pin@${version} is already published; skipping npm publish"
+          if npm view "dsh-session-emoji@${version}" version >/dev/null 2>&1; then
+            echo "dsh-session-emoji@${version} is already published; skipping npm publish"
           else
             # See the guard above: npm's read side can lag a successful publish, so a re-pushed
             # tag can miss it and hit E409 ("Cannot publish over previously staged version"). That

@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { PinController, type PinListSource, type PinReorderer, type PinWorkspaceSource } from '../src/pin-controller.ts'
 import type { PinRemoteLike } from '../src/faces.ts'
 import type { PinStore } from '../src/pin-store.ts'
-import { emptyStoredPins, PIN_COLOR_PALETTE } from '../src/pin-core.ts'
+/** Two shipped catalog emoji used across the tests. */
+const SMILE = '😀'
+const ROCKET = '🚀'
 
 interface Harness {
   controller: PinController
@@ -12,6 +14,13 @@ interface Harness {
   listListeners: Set<() => void>
   workspaceListeners: Set<() => void>
   setPins(pinned: string[]): void
+  setHostState(partial: Partial<{
+    pinned: string[]
+    workspacePinned: string[]
+    emoji: Record<string, string>
+    workspaceEmoji: Record<string, string>
+    recentEmoji: string[]
+  }>): void
   setList(phase: string, ids: readonly string[]): void
   setWorkspaceList(phase: string, ids: readonly string[]): void
   moves: string[][]
@@ -22,8 +31,9 @@ interface Harness {
 function harness(initial: {
   pinned?: string[]
   workspacePinned?: string[]
-  colors?: Record<string, string>
-  workspaceColors?: Record<string, string>
+  emoji?: Record<string, string>
+  workspaceEmoji?: Record<string, string>
+  recentEmoji?: string[]
   maxPins?: number
   reorderOnLoad?: boolean
   pruneStale?: boolean
@@ -41,8 +51,9 @@ function harness(initial: {
   let state = {
     pinned: initial.pinned ?? [],
     workspacePinned: initial.workspacePinned ?? [],
-    colors: initial.colors ?? {},
-    workspaceColors: initial.workspaceColors ?? {},
+    emoji: initial.emoji ?? {},
+    workspaceEmoji: initial.workspaceEmoji ?? {},
+    recentEmoji: initial.recentEmoji ?? [],
     boards: initial.boards ?? { byId: {}, membership: {} },
     tags: initial.tags ?? {},
     views: initial.views ?? [],
@@ -125,6 +136,10 @@ function harness(initial: {
       state = { ...state, pinned: [...next] }
       for (const listener of [...storeListeners]) listener()
     },
+    setHostState: (partial) => {
+      state = { ...state, ...partial }
+      for (const listener of [...storeListeners]) listener()
+    },
     setList: (phase, ids) => {
       listPhase = phase
       listIds = ids
@@ -190,7 +205,7 @@ describe('PinController', () => {
     expect(h.controller.getPinned()).toEqual(['a', 'b', 'c'])
     h.setList('ready', ['a', 'c'])
     expect(h.controller.getPinned()).toEqual(['a', 'c'])
-    expect(h.writeCalls).toEqual([{ pinned: ['a', 'c'], colors: {} }])
+    expect(h.writeCalls).toEqual([{ pinned: ['a', 'c'], emoji: {} }])
   })
 
   it('keeps stale ids when pruning is disabled', () => {
@@ -322,55 +337,123 @@ describe('PinController workspace level', () => {
     expect(h.writeCalls).toEqual([])
   })
 
-  it('prunes stale workspace pins and colors once the workspace list is ready', () => {
+  it('prunes stale workspace pins and emoji once the workspace list is ready', () => {
     const h = harness({
       workspacePinned: ['w1', 'w2'],
-      workspaceColors: { w1: PIN_COLOR_PALETTE[0], ghost: PIN_COLOR_PALETTE[1] },
+      workspaceEmoji: { w1: SMILE, ghost: ROCKET },
     })
     h.controller.start()
     h.setWorkspaceList('ready', ['w1'])
     expect(h.controller.getWorkspacePinned()).toEqual(['w1'])
-    expect(h.controller.getWorkspaceColor('ghost')).toBeUndefined()
-    expect(h.writeCalls).toEqual([{ workspacePinned: ['w1'], workspaceColors: { w1: PIN_COLOR_PALETTE[0] } }])
+    expect(h.controller.getWorkspaceEmoji('ghost')).toBeUndefined()
+    expect(h.writeCalls).toEqual([{ workspacePinned: ['w1'], workspaceEmoji: { w1: SMILE } }])
   })
 })
 
-describe('PinController row colors', () => {
-  it('cycles session colors through the palette and wraps to none', async () => {
-    const h = harness({ colors: {} })
+describe('PinController row emoji', () => {
+  it('sets and clears a session emoji and records the pick in recents', async () => {
+    const h = harness({})
     h.controller.start()
     h.writeCalls.length = 0
-    await h.controller.cycleColor('a')
-    expect(h.controller.getColor('a')).toBe(PIN_COLOR_PALETTE[0])
-    await h.controller.cycleColor('a')
-    expect(h.controller.getColor('a')).toBe(PIN_COLOR_PALETTE[1])
-    await h.controller.clearColor('a')
-    expect(h.controller.getColor('a')).toBeUndefined()
-    expect(h.writeCalls.length).toBe(3)
+    await h.controller.setEmoji('a', SMILE)
+    expect(h.controller.getEmoji('a')).toBe(SMILE)
+    expect(h.controller.getRecentEmoji()).toEqual([SMILE])
+    expect(h.writeCalls).toEqual([{ emoji: { a: SMILE }, recentEmoji: [SMILE] }])
+    await h.controller.setEmoji('b', ROCKET)
+    expect(h.controller.getRecentEmoji()).toEqual([ROCKET, SMILE])
+    await h.controller.setEmoji('a', ROCKET)
+    expect(h.controller.getRecentEmoji()).toEqual([ROCKET, SMILE])
+    await h.controller.clearEmoji('a')
+    expect(h.controller.getEmoji('a')).toBeUndefined()
+    // Clearing never disturbs the recents list.
+    expect(h.controller.getRecentEmoji()).toEqual([ROCKET, SMILE])
   })
 
-  it('cycles the last palette color back to none', async () => {
-    const h = harness({ colors: { a: PIN_COLOR_PALETTE[PIN_COLOR_PALETTE.length - 1] } })
+  it('rejects values outside the catalog without writing', async () => {
+    const h = harness({})
     h.controller.start()
-    await h.controller.cycleColor('a')
-    expect(h.controller.getColor('a')).toBeUndefined()
+    h.writeCalls.length = 0
+    await h.controller.setEmoji('a', '#ff0000')
+    await h.controller.setEmoji('a', '🇺🇸')
+    expect(h.controller.getEmoji('a')).toBeUndefined()
+    expect(h.writeCalls).toEqual([])
   })
 
-  it('cycles workspace colors independently', async () => {
-    const h = harness({ workspaceColors: {} })
+  it('sets and clears workspace emoji independently of session emoji', async () => {
+    const h = harness({})
     h.controller.start()
-    await h.controller.cycleWorkspaceColor('w')
-    expect(h.controller.getWorkspaceColor('w')).toBe(PIN_COLOR_PALETTE[0])
-    await h.controller.clearWorkspaceColor('w')
-    expect(h.controller.getWorkspaceColor('w')).toBeUndefined()
+    await h.controller.setWorkspaceEmoji('w', ROCKET)
+    expect(h.controller.getWorkspaceEmoji('w')).toBe(ROCKET)
+    expect(h.controller.getEmoji('w')).toBeUndefined()
+    await h.controller.clearWorkspaceEmoji('w')
+    expect(h.controller.getWorkspaceEmoji('w')).toBeUndefined()
+    expect(h.controller.getRecentEmoji()).toEqual([ROCKET])
   })
 
-  it('prunes session colors with the session list', () => {
-    const h = harness({ pinned: ['a'], colors: { a: PIN_COLOR_PALETTE[0], ghost: PIN_COLOR_PALETTE[1] } })
+  it('prunes session emoji with the session list', () => {
+    const h = harness({ pinned: ['a'], emoji: { a: SMILE, ghost: ROCKET } })
     h.controller.start()
     h.setList('ready', ['a'])
-    expect(h.controller.getColor('ghost')).toBeUndefined()
-    expect(h.controller.getColor('a')).toBe(PIN_COLOR_PALETTE[0])
+    expect(h.controller.getEmoji('ghost')).toBeUndefined()
+    expect(h.controller.getEmoji('a')).toBe(SMILE)
+  })
+
+  // The settings round trip republishes per-field snapshots, and an echo of an
+  // earlier write can land after a newer one. A late echo must not visibly
+  // revert the newer commit (the row would lose the emoji the Host kept).
+  it('keeps a just-committed emoji across a stale Host echo', async () => {
+    const h = harness({})
+    h.controller.start()
+    await h.controller.setEmoji('a', ROCKET)
+    expect(h.controller.getEmoji('a')).toBe(ROCKET)
+    h.setHostState({ emoji: {} })
+    expect(h.controller.getEmoji('a')).toBe(ROCKET)
+  })
+
+  it('keeps a re-pick that follows a clear when the clear echo lands late', async () => {
+    const h = harness({ emoji: { a: SMILE } })
+    h.controller.start()
+    await h.controller.clearEmoji('a')
+    await h.controller.setEmoji('a', ROCKET)
+    h.setHostState({ emoji: {} })
+    expect(h.controller.getEmoji('a')).toBe(ROCKET)
+    // Once the Host agrees, the shadow retires: a later external change wins.
+    h.setHostState({ emoji: { a: ROCKET } })
+    h.setHostState({ emoji: { b: SMILE } })
+    expect(h.controller.getEmoji('a')).toBeUndefined()
+    expect(h.controller.getEmoji('b')).toBe(SMILE)
+  })
+
+  it('drops the shadow when the Host refuses the write', async () => {
+    const h = harness({})
+    h.controller.start()
+    h.store.write = async () => {
+      throw new Error('refused')
+    }
+    await h.controller.setEmoji('a', ROCKET)
+    expect(h.controller.getEmoji('a')).toBeUndefined()
+  })
+
+  // The settings round trip takes about a second, so a reload (or any reader of
+  // the Host document) must be able to tell that a commit is still in flight.
+  it('reports a pending write until the Host echo arrives', async () => {
+    const h = harness({})
+    h.controller.start()
+    expect(h.controller.hasPendingWrites()).toBe(false)
+    await h.controller.setEmoji('a', ROCKET)
+    expect(h.controller.hasPendingWrites()).toBe(true)
+    h.setHostState({ emoji: { a: ROCKET } })
+    expect(h.controller.hasPendingWrites()).toBe(false)
+  })
+
+  it('clears the pending flag when the Host refuses the write', async () => {
+    const h = harness({})
+    h.controller.start()
+    h.store.write = async () => {
+      throw new Error('refused')
+    }
+    await h.controller.setEmoji('a', ROCKET)
+    expect(h.controller.hasPendingWrites()).toBe(false)
   })
 })
 

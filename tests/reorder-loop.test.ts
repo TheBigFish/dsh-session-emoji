@@ -174,7 +174,7 @@ function fakeSessions(): Record<string, unknown> {
   }
 }
 
-/** Host-backed `session-pin` settings form (the client `configForms` service) with the shipped defaults. */
+/** Host-backed `session-emoji` settings form (the client `configForms` service) with the shipped defaults. */
 function fakeConfigForms(): Record<string, unknown> {
   return {
     get: () => ({
@@ -184,8 +184,9 @@ function fakeConfigForms(): Record<string, unknown> {
         value: {
           pinned: [...PINNED],
           workspacePinned: [],
-          colors: {},
-          workspaceColors: {},
+          emoji: {},
+          workspaceEmoji: {},
+          recentEmoji: [],
           maxPins: 0,
           reorderOnLoad: true,
           pruneStale: true,
@@ -204,7 +205,7 @@ async function settle(ticks = 12): Promise<void> {
   }
 }
 
-describe('session-pin client reorder loop (issue #4)', () => {
+describe('session-emoji client reorder loop (issue #4)', () => {
   let root: Context | undefined
 
   afterEach(async () => {

@@ -1,5 +1,5 @@
 // scripts/loader-runner.mjs — real Loader composition runner for
-// dsh-session-pin (community five-layer model, layer 4). An independent
+// dsh-session-emoji (community five-layer model, layer 4). An independent
 // process boots a real Context, mounts the vendored Loader with the Include
 // builtin, mounts a minimal settings stand-in (the plugin's only injected
 // service), reads the given cordis.yml (the plugin row + config), and asserts

@@ -9,7 +9,7 @@ Report vulnerabilities privately through GitHub's **Private vulnerability report
 1. Go to the repository's **Security** tab → **Advisories** → **Report a vulnerability**.
 2. Describe the issue, the affected version, and a minimal reproduction.
 
-Or, if private reporting is unavailable, email the maintainer with `[SECURITY] dsh-session-pin` in the subject. Do not include exploit details in public places until the fix is released.
+Or, if private reporting is unavailable, email the maintainer with `[SECURITY] dsh-session-emoji` in the subject. Do not include exploit details in public places until the fix is released.
 
 ## Before you report
 
@@ -30,4 +30,4 @@ Or, if private reporting is unavailable, email the maintainer with `[SECURITY] d
 
 ## Scope
 
-This policy covers this plugin repository (`dsh-session-pin`) and its npm package. Vulnerabilities in the DeepSeek Harness core itself should be reported to [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) instead.
+This policy covers this plugin repository (`dsh-session-emoji`) and its npm package. Vulnerabilities in the DeepSeek Harness core itself should be reported to [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) instead.

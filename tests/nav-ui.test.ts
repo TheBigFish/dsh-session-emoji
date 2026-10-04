@@ -5,7 +5,7 @@ import { mountNavigator } from '../src/nav-ui.ts'
 import { PANEL_CLASS, PANEL_ROW_CLASS } from '../src/pin-ui-shared.ts'
 import type { PinController } from '../src/pin-controller.ts'
 
-const BAR_SELECTOR = 'div.__dsh-session-pin-nav__'
+const BAR_SELECTOR = 'div.__dsh-session-emoji-nav__'
 
 /** A PinController-shaped double recording every organizer write. */
 function fakePin() {

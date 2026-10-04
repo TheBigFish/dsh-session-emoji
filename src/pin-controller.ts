@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * PinController: the framework-free state machine over the two-level pinned
- * set (sessions and workspaces) and the per-level row-color maps. It owns the
- * state transitions the browser UI triggers (explicit set / toggle, color
- * cycle / clear, and the list-ready lifecycle: stale-pin pruning plus the
- * re-assertion of pinned order) and republishes a subscription feed for every
- * consumer (DOM overlay, slot components, tests). Persistence lives in the
- * injected {@link PinStore}; ordering in the injected {@link PinReorderer};
- * the sessions/workspaces lists in the injected sources; the optional
- * log-backed write channel (session pins only) in the injected
+ * set (sessions and workspaces), the per-level row-emoji maps, and the shared
+ * recent-emoji list. It owns the state transitions the browser UI triggers
+ * (explicit set / toggle, emoji pick / clear, and the list-ready lifecycle:
+ * stale-pin pruning plus the re-assertion of pinned order) and republishes a
+ * subscription feed for every consumer (DOM overlay, slot components, tests).
+ * Persistence lives in the injected {@link PinStore}; ordering in the injected
+ * {@link PinReorderer}; the sessions/workspaces lists in the injected sources;
+ * the optional log-backed write channel (session pins only) in the injected
  * {@link PinRemoteLike} — all narrow structural faces, so no cordis or DOM
  * type reaches this module.
  *
  * Write precedence: when the remote (upstream `session.setPinned` RPC) is
- * present, session-pin commits go through it first — the session log is the
+ * present, session-emoji commits go through it first — the session log is the
  * canonical residence — and the store write mirrors the commit so the ordered
  * list, panel, and reordering stay consistent. A failing remote self-disables
  * and the store takes over; `connection/reset` re-enables it. Workspace pins
- * and both color maps are plugin-local state and always write to the store.
- * @module dsh-session-pin/pin-controller
+ * and both emoji maps are plugin-local state and always write to the store.
+ * @module dsh-session-emoji/pin-controller
  */
-import { nextPaletteColor, normalizePins, pruneColors, prunePins } from './pin-core.ts'
+import { isEmojiChar, normalizePins, pruneEmoji, prunePins, rememberEmoji } from './pin-core.ts'
 import {
   assignPinToBoard, removeBoard, reorderBoards as reorderBoardRegistry, saveView, setEntityTags, upsertBoard,
   type BoardRegistry, type SavedView,
@@ -30,6 +30,11 @@ import type { PinStore, PinStoreSnapshot } from './pin-store.ts'
 
 /** The ready phase of the sessions list (pruning and initial reorder gate). */
 const LIST_READY = 'ready'
+
+/** Deep equality for the plain JSON-shaped values one section field carries. */
+function sameSectionValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+}
 
 /** Sessions-list slice the controller reads (phase + authoritative ids). */
 export interface PinListSource {
@@ -81,6 +86,8 @@ export class PinController {
   private snapshot: PinStoreSnapshot
   private readonly listeners = new Set<() => void>()
   private readonly disposers: Array<() => void> = []
+  /** Locally committed field values shadowing a lagging Host echo. */
+  private readonly pending = new Map<string, unknown>()
   private started = false
 
   constructor(
@@ -115,7 +122,7 @@ export class PinController {
   }
 
   /**
-   * Subscribe to pin/color-state changes.
+   * Subscribe to pin/emoji-state changes.
    * @param listener - invoked after each adopted or refreshed state.
    * @returns the unsubscribe function.
    */
@@ -154,14 +161,29 @@ export class PinController {
     return this.snapshot.maxPins
   }
 
-  /** Stored row color of one session, or undefined. */
-  getColor(id: string): string | undefined {
-    return this.snapshot.colors[id]
+  /**
+   * Whether a settings write is still unacknowledged by the Host. The settings
+   * round trip takes about a second, so the UI can surface a syncing state and
+   * a reload can wait for durability instead of racing a queued write.
+   * @returns true while at least one committed field awaits its Host echo.
+   */
+  hasPendingWrites(): boolean {
+    return this.pending.size > 0
   }
 
-  /** Stored row color of one workspace, or undefined. */
-  getWorkspaceColor(id: string): string | undefined {
-    return this.snapshot.workspaceColors[id]
+  /** Stored row emoji of one session, or undefined. */
+  getEmoji(id: string): string | undefined {
+    return this.snapshot.emoji[id]
+  }
+
+  /** Stored row emoji of one workspace, or undefined. */
+  getWorkspaceEmoji(id: string): string | undefined {
+    return this.snapshot.workspaceEmoji[id]
+  }
+
+  /** The recently picked emoji, newest first (shared by both levels). */
+  getRecentEmoji(): readonly string[] {
+    return this.snapshot.recentEmoji
   }
 
   // ── Navigation organizer (boards / tags / views) ────────────────────────
@@ -187,8 +209,7 @@ export class PinController {
    */
   async createBoard(id: string, name: string): Promise<void> {
     const boards = upsertBoard(this.snapshot.boards, id, name)
-    await this.store.write({ boards })
-    this.adopt({ boards })
+    await this.commit({ boards })
   }
 
   /** Remove a board; its pins fall back to the ungrouped section.
@@ -196,8 +217,7 @@ export class PinController {
    */
   async removeBoard(id: string): Promise<void> {
     const boards = removeBoard(this.snapshot.boards, id)
-    await this.store.write({ boards })
-    this.adopt({ boards })
+    await this.commit({ boards })
   }
 
   /** Rename an existing board (a missing id creates it, mirroring createBoard).
@@ -213,8 +233,7 @@ export class PinController {
    */
   async reorderBoards(orderedIds: readonly string[]): Promise<void> {
     const boards = reorderBoardRegistry(this.snapshot.boards, orderedIds)
-    await this.store.write({ boards })
-    this.adopt({ boards })
+    await this.commit({ boards })
   }
 
   /** Assign one pinned entity to a board ('' ungroups).
@@ -223,8 +242,7 @@ export class PinController {
    */
   async assignBoard(pinId: string, boardId: string): Promise<void> {
     const boards = assignPinToBoard(this.snapshot.boards, pinId, boardId)
-    await this.store.write({ boards })
-    this.adopt({ boards })
+    await this.commit({ boards })
   }
 
   /** Set one entity's tags (empty list removes the entry).
@@ -233,8 +251,7 @@ export class PinController {
    */
   async setTags(id: string, tags: readonly string[]): Promise<void> {
     const next = setEntityTags(this.snapshot.tags, id, tags)
-    await this.store.write({ tags: next })
-    this.adopt({ tags: next })
+    await this.commit({ tags: next })
   }
 
   /** Save a filter view (same id replaces; the list caps at MAX_VIEWS).
@@ -242,8 +259,7 @@ export class PinController {
    */
   async saveView(view: SavedView): Promise<void> {
     const views = saveView(this.snapshot.views, view)
-    await this.store.write({ views })
-    this.adopt({ views })
+    await this.commit({ views })
   }
 
   /**
@@ -258,7 +274,7 @@ export class PinController {
   }
 
   /**
-   * Commit an explicit next session-pin state. Unpinning always succeeds;
+   * Commit an explicit next session-emoji state. Unpinning always succeeds;
    * pinning beyond the limit answers `'limit'` without a write. A successful
    * pin also moves the session to the front of its workspace account.
    * @param id - session id to pin or unpin.
@@ -278,18 +294,15 @@ export class PinController {
       if (result.ok) {
         // Mirror the log-backed commit into the store so the ordered list,
         // panel, and workspace reordering stay consistent.
-        await this.store.write({ pinned: candidate })
-        this.adopt({ pinned: candidate })
+        await this.commit({ pinned: candidate })
         if (next) void this.reorderer.moveToTop(id)
         return next ? 'pinned' : 'unpinned'
       }
       // Remote absent or failed: the store path takes over.
     }
-    await this.store.write({ pinned: candidate })
-    // Adopt the write outcome immediately: the settings round trip (and its
-    // subscription republish) lands later, but consumers must see the commit
-    // at the click. A rejected write reloads Host state through refresh().
-    this.adopt({ pinned: candidate })
+    // Paint the commit at the click; the shadow keeps it until the settings
+    // round trip echoes it back. A rejected write reloads Host state.
+    await this.commit({ pinned: candidate })
     if (next) void this.reorderer.moveToTop(id)
     return next ? 'pinned' : 'unpinned'
   }
@@ -316,60 +329,47 @@ export class PinController {
     const candidate = next
       ? [id, ...this.snapshot.workspacePinned.filter(item => item !== id)]
       : this.snapshot.workspacePinned.filter(item => item !== id)
-    await this.store.write({ workspacePinned: candidate })
-    this.adopt({ workspacePinned: candidate })
+    await this.commit({ workspacePinned: candidate })
     if (next) void this.reorderer.moveWorkspaceToTop(id)
     return next ? 'pinned' : 'unpinned'
   }
 
-  /** Advance one session's color to the next palette step (wraps to none).
+  /** Commit one session emoji (null clears; catalog chars only). Picking an
+   * emoji also moves it to the front of the shared recents list.
    * @param id - session id.
+   * @param emoji - next emoji or null to clear.
    */
-  async cycleColor(id: string): Promise<void> {
-    const next = nextPaletteColor(this.snapshot.colors[id])
-    await this.setColor(id, next)
+  async setEmoji(id: string, emoji: string | null): Promise<void> {
+    if (emoji !== null && !isEmojiChar(emoji)) return
+    const map = { ...this.snapshot.emoji }
+    if (emoji === null) delete map[id]
+    else map[id] = emoji
+    const recentEmoji = emoji === null ? this.snapshot.recentEmoji : rememberEmoji(this.snapshot.recentEmoji, emoji)
+    await this.commit(emoji === null ? { emoji: map } : { emoji: map, recentEmoji })
   }
 
-  /** Advance one workspace's color to the next palette step (wraps to none).
+  /** Remove one session's emoji. */
+  async clearEmoji(id: string): Promise<void> {
+    await this.setEmoji(id, null)
+  }
+
+  /** Commit one workspace emoji (null clears; catalog chars only). Picking an
+   * emoji also moves it to the front of the shared recents list.
    * @param id - workspace id.
+   * @param emoji - next emoji or null to clear.
    */
-  async cycleWorkspaceColor(id: string): Promise<void> {
-    const next = nextPaletteColor(this.snapshot.workspaceColors[id])
-    await this.setWorkspaceColor(id, next)
+  async setWorkspaceEmoji(id: string, emoji: string | null): Promise<void> {
+    if (emoji !== null && !isEmojiChar(emoji)) return
+    const map = { ...this.snapshot.workspaceEmoji }
+    if (emoji === null) delete map[id]
+    else map[id] = emoji
+    const recentEmoji = emoji === null ? this.snapshot.recentEmoji : rememberEmoji(this.snapshot.recentEmoji, emoji)
+    await this.commit(emoji === null ? { workspaceEmoji: map } : { workspaceEmoji: map, recentEmoji })
   }
 
-  /** Remove one session's color. */
-  async clearColor(id: string): Promise<void> {
-    await this.setColor(id, null)
-  }
-
-  /** Remove one workspace's color. */
-  async clearWorkspaceColor(id: string): Promise<void> {
-    await this.setWorkspaceColor(id, null)
-  }
-
-  /** Commit one session color (null clears; palette values only).
-   * @param id - session id.
-   * @param color - next color or null.
-   */
-  async setColor(id: string, color: string | null): Promise<void> {
-    const colors = { ...this.snapshot.colors }
-    if (color === null) delete colors[id]
-    else colors[id] = color
-    await this.store.write({ colors })
-    this.adopt({ colors })
-  }
-
-  /** Commit one workspace color (null clears; palette values only).
-   * @param id - workspace id.
-   * @param color - next color or null.
-   */
-  async setWorkspaceColor(id: string, color: string | null): Promise<void> {
-    const colors = { ...this.snapshot.workspaceColors }
-    if (color === null) delete colors[id]
-    else colors[id] = color
-    await this.store.write({ workspaceColors: colors })
-    this.adopt({ workspaceColors: colors })
+  /** Remove one workspace's emoji. */
+  async clearWorkspaceEmoji(id: string): Promise<void> {
+    await this.setWorkspaceEmoji(id, null)
   }
 
   /**
@@ -385,8 +385,40 @@ export class PinController {
 
   /** Store feed arrived: re-read the snapshot and republish. */
   private refresh(): void {
-    this.snapshot = this.store.read()
+    const next = this.store.read()
+    // Keep locally committed values visible until the Host echoes them back.
+    // Per-field snapshots can arrive out of order, so a late echo of an
+    // earlier write must not visibly revert a newer one (the row would lose
+    // the emoji it just gained while the Host kept it). Deleting the visited
+    // entry during Map iteration is defined behaviour.
+    for (const [field, value] of this.pending) {
+      const observed = (next as unknown as Record<string, unknown>)[field]
+      if (sameSectionValue(observed, value)) this.pending.delete(field)
+      else (next as unknown as Record<string, unknown>)[field] = value
+    }
+    this.snapshot = next
     this.notify()
+  }
+
+  /**
+   * Commit one partial section: paint it at the click and keep it authoritative
+   * until the Host echo agrees. A rejected write drops the shadow and re-reads
+   * the Host truth.
+   * @param section - the partial section to persist.
+   */
+  private async commit(section: Partial<PinStoreSnapshot>): Promise<void> {
+    this.adopt(section)
+    const shadowed = Object.keys(section).map(field =>
+      [field, (this.snapshot as unknown as Record<string, unknown>)[field]] as const)
+    for (const [field, value] of shadowed) this.pending.set(field, value)
+    try {
+      await this.store.write(section)
+    } catch {
+      for (const [field, value] of shadowed) {
+        if (sameSectionValue(this.pending.get(field), value)) this.pending.delete(field)
+      }
+      this.refresh()
+    }
   }
 
   /** Sessions list changed: gate pruning and initial reorder on the ready phase. */
@@ -396,11 +428,9 @@ export class PinController {
     if (this.snapshot.pruneStale) {
       const live = new Set(list.ids)
       const pruned = prunePins(this.snapshot.pinned, live)
-      const colors = pruneColors(this.snapshot.colors, live)
-      if (pruned.length !== this.snapshot.pinned.length || Object.keys(colors).length !== Object.keys(this.snapshot.colors).length) {
-        this.snapshot = { ...this.snapshot, pinned: pruned, colors }
-        void this.store.write({ pinned: pruned, colors })
-        this.notify()
+      const emoji = pruneEmoji(this.snapshot.emoji, live)
+      if (pruned.length !== this.snapshot.pinned.length || Object.keys(emoji).length !== Object.keys(this.snapshot.emoji).length) {
+        void this.commit({ pinned: pruned, emoji })
       }
     }
     this.reapplyOrder()
@@ -413,23 +443,33 @@ export class PinController {
     if (this.snapshot.pruneStale) {
       const live = new Set(list.ids)
       const pruned = prunePins(this.snapshot.workspacePinned, live)
-      const colors = pruneColors(this.snapshot.workspaceColors, live)
-      if (pruned.length !== this.snapshot.workspacePinned.length || Object.keys(colors).length !== Object.keys(this.snapshot.workspaceColors).length) {
-        this.snapshot = { ...this.snapshot, workspacePinned: pruned, workspaceColors: colors }
-        void this.store.write({ workspacePinned: pruned, workspaceColors: colors })
-        this.notify()
+      const emoji = pruneEmoji(this.snapshot.workspaceEmoji, live)
+      if (pruned.length !== this.snapshot.workspacePinned.length || Object.keys(emoji).length !== Object.keys(this.snapshot.workspaceEmoji).length) {
+        void this.commit({ workspacePinned: pruned, workspaceEmoji: emoji })
       }
     }
     this.reapplyOrder()
   }
 
   /** Adopt locally computed partial state and republish. */
+  /**
+   * One-shot migration entry (legacy-namespace import): commit a whole section
+   * patch through the usual adopt → shadow → Host write sequence, so the UI
+   * shows the imported state immediately and the pending flag covers the round
+   * trip. Callers decide the patch; the controller never inspects it.
+   * @param section - section fields to write.
+   */
+  async importSection(section: Partial<PinStoreSnapshot>): Promise<void> {
+    await this.commit(section)
+  }
+
   private adopt(partial: Partial<PinStoreSnapshot>): void {
     const next = { ...this.snapshot }
     if (partial.pinned !== undefined) next.pinned = normalizePins(partial.pinned)
     if (partial.workspacePinned !== undefined) next.workspacePinned = normalizePins(partial.workspacePinned)
-    if (partial.colors !== undefined) next.colors = { ...partial.colors }
-    if (partial.workspaceColors !== undefined) next.workspaceColors = { ...partial.workspaceColors }
+    if (partial.emoji !== undefined) next.emoji = { ...partial.emoji }
+    if (partial.workspaceEmoji !== undefined) next.workspaceEmoji = { ...partial.workspaceEmoji }
+    if (partial.recentEmoji !== undefined) next.recentEmoji = [...partial.recentEmoji]
     if (partial.boards !== undefined) next.boards = partial.boards
     if (partial.tags !== undefined) next.tags = partial.tags
     if (partial.views !== undefined) next.views = partial.views

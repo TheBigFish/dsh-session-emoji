@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mountRowSlot, ROW_SLOT_KEY, rowSlotDeclared, type RowSlotRegistryLike } from '../src/row-slot.ts'
 import type { PinReadFace } from '../src/faces.ts'
+import type { EmojiPickerFace } from '../src/emoji-picker.ts'
 
 /** Minimal pin read face: the badge is never rendered in these tests, so only the shape matters. */
 function fakePin(): PinReadFace {
@@ -11,20 +12,32 @@ function fakePin(): PinReadFace {
     getWorkspacePinned: () => [],
     isWorkspacePinned: () => false,
     getMaxPins: () => 0,
+    hasPendingWrites: () => false,
     toggle: async () => 'unpinned' as const,
     setPinned: async () => 'unpinned' as const,
     toggleWorkspace: async () => 'unpinned' as const,
     setWorkspacePinned: async () => 'unpinned' as const,
-    getColor: () => undefined,
-    getWorkspaceColor: () => undefined,
-    cycleColor: async (): Promise<void> => {},
-    cycleWorkspaceColor: async (): Promise<void> => {},
-    clearColor: async (): Promise<void> => {},
-    clearWorkspaceColor: async (): Promise<void> => {},
+    getEmoji: () => undefined,
+    getWorkspaceEmoji: () => undefined,
+    getRecentEmoji: () => [],
+    setEmoji: async (): Promise<void> => {},
+    clearEmoji: async (): Promise<void> => {},
+    setWorkspaceEmoji: async (): Promise<void> => {},
+    clearWorkspaceEmoji: async (): Promise<void> => {},
     getBoards: () => ({ byId: {}, membership: {} }),
     getTags: () => ({}),
     getViews: () => [],
     subscribe: () => (): void => {},
+  }
+}
+
+/** Minimal picker face: never opened in these tests. */
+function fakePicker(): EmojiPickerFace {
+  return {
+    open: (): void => {},
+    close: (): void => {},
+    isOpen: () => false,
+    dispose: (): void => {},
   }
 }
 
@@ -44,7 +57,7 @@ describe('row-slot degrade (0.1.2-alpha.1 hosts declare no sessions.row.action)'
       }
     })
     const slots = { inject, register, snapshot: () => [] } as unknown as RowSlotRegistryLike
-    const dispose = mountRowSlot({ slots, pin: fakePin(), t: key => key })
+    const dispose = mountRowSlot({ slots, pin: fakePin(), picker: fakePicker(), t: key => key })
     expect(inject).toHaveBeenCalledWith(ROW_SLOT_KEY, expect.any(Function))
     expect(register).not.toHaveBeenCalled()
     // Disposing cancels the pending wait without ever touching register.
@@ -60,7 +73,7 @@ describe('row-slot degrade (0.1.2-alpha.1 hosts declare no sessions.row.action)'
       return (): void => {}
     })
     const slots = { inject, register, snapshot: () => [{ name: ROW_SLOT_KEY, id: 'owner' }] } as unknown as RowSlotRegistryLike
-    const dispose = mountRowSlot({ slots, pin: fakePin(), t: key => key })
+    const dispose = mountRowSlot({ slots, pin: fakePin(), picker: fakePicker(), t: key => key })
     expect(register).not.toHaveBeenCalled()
     pending!()
     expect(register).toHaveBeenCalledTimes(1)

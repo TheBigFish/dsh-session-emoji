@@ -30,5 +30,13 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run check:readmes
       - run: pnpm run build
+      # The git channel installs the committed `lib/`: pnpm >=10 never runs a
+      # dependency's build scripts (the allow-list key is the resolved commit
+      # sha), so the checked-in build is what a GitHub install ships. The build
+      # above just ran, so the committed output must be byte-identical.
+      - name: Committed lib is current
+        run: |
+          git ls-files --error-unmatch lib/index.js lib/client.js >/dev/null
+          git diff --exit-code -- lib
       - run: pnpm run verify:self-contained
       - run: pnpm run verify:artifacts

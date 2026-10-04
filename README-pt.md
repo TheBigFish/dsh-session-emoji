@@ -28,6 +28,12 @@
 Este fork baseia-se em dsh-session-pin, da [família de plugins DSH](https://github.com/PerryLink) (mais de 40, todos Apache-2.0). Se for útil, **deixe uma estrela**: não desbloqueia nada, mas ajuda a próxima pessoa a encontrá-lo.
 
 *English:* part of a 40+ plugin family for DeepSeek Harness. If it is useful, **a star helps the next person find it** — nothing is gated behind it.
+## Screenshots
+
+![Emoji picker](https://raw.githubusercontent.com/TheBigFish/dsh-session-emoji/main/docs/demo-picker.png)
+
+*Escolha um emoji na janela de busca; Shift+clique remove a marca.*
+
 ## Compatibility
 
 | Superfície | Status |

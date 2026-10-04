@@ -32,6 +32,12 @@
 *English:* part of a 40+ plugin family for DeepSeek Harness. If it is useful, **a star helps the next person find it** — nothing is gated behind it.
 
 
+## Screenshots
+
+![Emoji picker](https://raw.githubusercontent.com/TheBigFish/dsh-session-emoji/main/docs/demo-picker.png)
+
+*Pick an emoji from the searchable popover; Shift+click clears the mark.*
+
 ## Compatibility
 
 | Surface | Status |

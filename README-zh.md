@@ -30,6 +30,12 @@
 本分支基于 [DSH 插件家族](https://github.com/PerryLink) 的 dsh-session-pin（家族 40+ 个插件，全部 Apache-2.0）。如果你在用，**给个 star** —— 它不会解锁任何功能，但会让下一个人在搜索里更容易找到它。
 
 *English:* part of a 40+ plugin family for DeepSeek Harness. If it is useful, **a star helps the next person find it** — nothing is gated behind it.
+## Screenshots
+
+![Emoji picker](https://raw.githubusercontent.com/TheBigFish/dsh-session-emoji/main/docs/demo-picker.png)
+
+*点击弹出可搜索的 emoji 选择框；Shift+点击取消标记。*
+
 ## Compatibility
 
 | 维度 | 状态 |
